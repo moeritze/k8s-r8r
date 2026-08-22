@@ -19,7 +19,7 @@ package policy
 import (
 	"sort"
 
-	r8rv1alpha1 "github.com/moritzroeseler/k8s-r8r/api/v1alpha1"
+	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
 )
 
 // EffectiveOptions is the resolved option set that applies to a target when

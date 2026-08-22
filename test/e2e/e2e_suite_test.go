@@ -28,7 +28,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"github.com/moritzroeseler/k8s-r8r/test/utils"
+	"github.com/moeritze/k8s-r8r/test/utils"
 )
 
 var (

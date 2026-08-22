@@ -7,7 +7,7 @@ domain: r8r.io
 layout:
 - go.kubebuilder.io/v4
 projectName: k8s-r8r
-repo: github.com/moritzroeseler/k8s-r8r
+repo: github.com/moeritze/k8s-r8r
 version: "3"
 resources:
 - api:
@@ -15,11 +15,11 @@ resources:
     namespaced: true
   domain: r8r.io
   kind: Replication
-  path: github.com/moritzroeseler/k8s-r8r/api/v1alpha1
+  path: github.com/moeritze/k8s-r8r/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
   domain: r8r.io
   kind: ReplicationPolicy
-  path: github.com/moritzroeseler/k8s-r8r/api/v1alpha1
+  path: github.com/moeritze/k8s-r8r/api/v1alpha1
   version: v1alpha1

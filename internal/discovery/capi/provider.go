@@ -35,7 +35,7 @@ import (
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/moritzroeseler/k8s-r8r/internal/discovery"
+	"github.com/moeritze/k8s-r8r/internal/discovery"
 )
 
 // ProviderName is the registry name selecting this provider in operator

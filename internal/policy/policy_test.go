@@ -23,7 +23,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	r8rv1alpha1 "github.com/moritzroeseler/k8s-r8r/api/v1alpha1"
+	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
 )
 
 // makePolicy builds a ReplicationPolicy for tests.

@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/moritzroeseler/k8s-r8r/internal/discovery"
+	"github.com/moeritze/k8s-r8r/internal/discovery"
 )
 
 func TestRBACScopeRules(t *testing.T) {

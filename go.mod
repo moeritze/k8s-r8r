@@ -1,4 +1,4 @@
-module github.com/moritzroeseler/k8s-r8r
+module github.com/moeritze/k8s-r8r
 
 go 1.26.0
 

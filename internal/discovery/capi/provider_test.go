@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
-	"github.com/moritzroeseler/k8s-r8r/internal/discovery"
+	"github.com/moeritze/k8s-r8r/internal/discovery"
 )
 
 // cluster builds an unstructured CAPI Cluster object.

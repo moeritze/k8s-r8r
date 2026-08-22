@@ -10,7 +10,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/moritzroeseler/k8s-r8r/internal/discovery"
+	"github.com/moeritze/k8s-r8r/internal/discovery"
 )
 
 // kubeconfigSecretKeys are the data keys tried, in order, when extracting a
