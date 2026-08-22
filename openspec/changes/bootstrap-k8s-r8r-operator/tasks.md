@@ -12,8 +12,8 @@
 
 ## 3. Policy Engine
 
-- [ ] 3.1 Implement policy evaluation library: default deny, all-dimensions-match-single-policy, union across policies; pure functions with table-driven tests
-- [ ] 3.2 Implement option resolution (effective conflictPolicy, namespace creation, revocationPolicy) when multiple policies permit a target
+- [x] 3.1 Implement policy evaluation library: default deny, all-dimensions-match-single-policy, union across policies; pure functions with table-driven tests
+- [x] 3.2 Implement option resolution (effective conflictPolicy, namespace creation, revocationPolicy) when multiple policies permit a target
 - [ ] 3.3 Policy revocation semantics: detect permission withdrawal on reconcile, mark `PolicyRevoked`, act per revocationPolicy
 
 ## 4. Request Controller (annotation shim)
