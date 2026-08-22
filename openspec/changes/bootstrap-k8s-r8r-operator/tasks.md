@@ -25,10 +25,10 @@
 
 ## 5. Discovery Layer
 
-- [ ] 5.1 Define `Discovery` provider interface (cluster records: name, labels, readiness, credential ref; register/deregister events) + provider registry/config
-- [ ] 5.2 Implement ClusterAPI provider: watch `Cluster` objects, readiness gating (control plane ready), label extraction, kubeconfig Secret reference
-- [ ] 5.3 Spoke credential bootstrap: one-shot namespace + ServiceAccount + narrow RBAC creation via CAPI kubeconfig; short-lived token acquisition + rotation; RBAC re-narrowing on policy-universe shrink
-- [ ] 5.4 Cluster runtime manager: start/stop one runtime per ready cluster, connectivity state tracking with backoff
+- [x] 5.1 Define `Discovery` provider interface (cluster records: name, labels, readiness, credential ref; register/deregister events) + provider registry/config
+- [x] 5.2 Implement ClusterAPI provider: watch `Cluster` objects, readiness gating (control plane ready), label extraction, kubeconfig Secret reference
+- [x] 5.3 Spoke credential bootstrap: one-shot namespace + ServiceAccount + narrow RBAC creation via CAPI kubeconfig; short-lived token acquisition + rotation; RBAC re-narrowing on policy-universe shrink
+- [x] 5.4 Cluster runtime manager: start/stop one runtime per ready cluster, connectivity state tracking with backoff
 
 ## 6. Replication Engine
 
