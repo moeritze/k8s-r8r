@@ -60,6 +60,6 @@
 
 ## 10. End-to-End Validation
 
-- [ ] 10.1 e2e: multi-kind-cluster suite — annotate → replicate → drift-repair → revoke → GC, covering conflict modes and namespace ensure
-- [ ] 10.2 e2e: cluster lifecycle — register (bootstrap SA), deregister (runtime stop + inventory release), unreachable-cluster behavior
-- [ ] 10.3 Scale sanity check: many-target fanout status stays under size cap; no status churn when healthy
+- [x] 10.1 e2e: multi-kind-cluster suite — annotate → replicate → drift-repair → revoke → GC, covering conflict modes and namespace ensure
+- [x] 10.2 e2e: cluster lifecycle — register (bootstrap SA), deregister (runtime stop + inventory release), unreachable-cluster behavior
+- [x] 10.3 Scale sanity check: many-target fanout status stays under size cap; no status churn when healthy
