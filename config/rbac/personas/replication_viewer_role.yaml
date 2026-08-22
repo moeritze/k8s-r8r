@@ -1,0 +1,24 @@
+# Persona: replication viewer.
+# Grants read-only access to Replication objects (the operator-owned canonical
+# request materializations). Users never write Replications — the operator
+# owns them — so read-only is the full user-facing surface. The aggregation
+# label folds these permissions into the built-in "view" ClusterRole, so
+# anyone with view access can also see Replication status.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-r8r-replication-viewer
+  labels:
+    app.kubernetes.io/name: k8s-r8r
+    app.kubernetes.io/managed-by: kustomize
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+- apiGroups:
+  - r8r.io
+  resources:
+  - replications
+  - replications/status
+  verbs:
+  - get
+  - list
+  - watch

@@ -6,9 +6,9 @@
 
 ## 2. CRD APIs
 
-- [ ] 2.1 Define `Replication` v1alpha1 type: spec (source ref, origin kind, resolved targets), status (summary counts, capped non-ready detail list, source hash, conditions), inventory field
-- [ ] 2.2 Define `ReplicationPolicy` v1alpha1 type (cluster-scoped): source namespaces/kinds, target clusterSelector/namespaces, options (allowNamespaceCreation, allowed conflictPolicies, revocationPolicy)
-- [ ] 2.3 Generate CRDs, deepcopy, clients; RBAC manifests for personas (admin-only policy write, user read-only Replication)
+- [x] 2.1 Define `Replication` v1alpha1 type: spec (source ref, origin kind, resolved targets), status (summary counts, capped non-ready detail list, source hash, conditions), inventory field
+- [x] 2.2 Define `ReplicationPolicy` v1alpha1 type (cluster-scoped): source namespaces/kinds, target clusterSelector/namespaces, options (allowNamespaceCreation, allowed conflictPolicies, revocationPolicy)
+- [x] 2.3 Generate CRDs, deepcopy, clients; RBAC manifests for personas (admin-only policy write, user read-only Replication)
 
 ## 3. Policy Engine
 
