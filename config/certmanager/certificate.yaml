@@ -1,0 +1,19 @@
+# The SERVICE_NAME and SERVICE_NAMESPACE placeholders are substituted by the
+# replacements in config/default/kustomization.yaml (uncomment the
+# [CERTMANAGER] blocks there to enable them).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  labels:
+    app.kubernetes.io/name: k8s-r8r
+    app.kubernetes.io/managed-by: kustomize
+  name: serving-cert # this name should match the one appeared in kustomizeconfig.yaml
+  namespace: system
+spec:
+  dnsNames:
+    - SERVICE_NAME.SERVICE_NAMESPACE.svc
+    - SERVICE_NAME.SERVICE_NAMESPACE.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: selfsigned-issuer
+  secretName: webhook-server-cert

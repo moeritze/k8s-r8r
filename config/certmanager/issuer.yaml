@@ -1,0 +1,13 @@
+# Self-signed issuer for the webhook serving certificate. Suitable because the
+# webhook is advisory (failurePolicy: Ignore): only the API server verifies
+# this certificate, via the CA bundle cert-manager injects.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  labels:
+    app.kubernetes.io/name: k8s-r8r
+    app.kubernetes.io/managed-by: kustomize
+  name: selfsigned-issuer
+  namespace: system
+spec:
+  selfSigned: {}

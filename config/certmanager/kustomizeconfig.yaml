@@ -1,0 +1,8 @@
+# Teaches kustomize how to handle references inside Certificate objects.
+nameReference:
+  - kind: Issuer
+    group: cert-manager.io
+    fieldSpecs:
+      - kind: Certificate
+        group: cert-manager.io
+        path: spec/issuerRef/name

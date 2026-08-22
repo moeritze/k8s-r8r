@@ -42,8 +42,8 @@
 
 ## 7. Admission Webhook
 
-- [ ] 7.1 Validating webhook server: evaluate annotations against policies, dimension-naming error messages, malformed-annotation rejection
-- [ ] 7.2 Webhook configuration: CEL matchConditions (annotation presence), failurePolicy Ignore, cert management (chart-integrated)
+- [x] 7.1 Validating webhook server: evaluate annotations against policies, dimension-naming error messages, malformed-annotation rejection
+- [x] 7.2 Webhook configuration: CEL matchConditions (annotation presence), failurePolicy Ignore, cert management (chart-integrated)
 
 ## 8. Observability & HA
 
