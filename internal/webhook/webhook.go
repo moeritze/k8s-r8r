@@ -142,7 +142,7 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 	parsed, ferr := parseRequest(meta.Annotations, req.Namespace)
 	warnings := warningsFor(parsed)
 	if ferr != nil {
-		return admission.Denied(ferr.message()).WithWarnings(warnings...)
+		return admission.Denied(ferr.Error()).WithWarnings(warnings...)
 	}
 
 	if !parsed.optedIn {

@@ -16,53 +16,59 @@ limitations under the License.
 
 package webhook
 
-// Minimal parser for the r8r.io/* replication-request annotation contract
-// (replication-request spec).
+// Admission-time adapter over the shared r8r.io/* annotation parser
+// (internal/annotations) — the same parser the request controller uses, so
+// apply-time error messages and reconcile-time behavior can never diverge.
 //
-// TODO(webhook): converge on the shared parser in internal/annotations once it
-// lands (it is being introduced by the request-controller work). This local
-// copy exists only so the webhook has no cross-package dependency race; it
-// must implement identical semantics for the four request keys.
+// The webhook's contract differs from the controller's in exactly two ways,
+// both handled here before delegating to annotations.Parse:
+//
+//   - Unknown r8r.io/* keys WARN instead of denying (typos should not block
+//     writes the controller would process fine, and an older webhook must not
+//     reject requests using newer keys). They are filtered out before Parse,
+//     which would reject them.
+//   - The policy pre-check needs to know whether a cluster selector was
+//     explicitly provided (absent/empty selectors skip the satisfiability
+//     check), which Parse's never-nil selector does not expose.
 
 import (
-	"fmt"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/util/validation"
+
+	"github.com/moeritze/k8s-r8r/internal/annotations"
 )
 
-// Annotation keys of the replication-request contract.
+// Annotation keys of the replication-request contract, aliased from the
+// shared parser package.
 const (
-	annPrefix           = "r8r.io/"
-	annReplicate        = "r8r.io/replicate"
-	annTargetClusters   = "r8r.io/target-clusters"
-	annTargetNamespaces = "r8r.io/target-namespaces"
-	annTargetName       = "r8r.io/target-name"
+	annPrefix           = annotations.Prefix
+	annReplicate        = annotations.KeyReplicate
+	annTargetClusters   = annotations.KeyTargetClusters
+	annTargetNamespaces = annotations.KeyTargetNamespaces
+	annTargetName       = annotations.KeyTargetName
 
 	// annSourceHash is written by the operator onto replicas; it is not a
 	// request key but must not trigger an unknown-key warning.
-	annSourceHash = "r8r.io/source-hash"
+	annSourceHash = annotations.KeySourceHash
 )
 
-// fieldError describes a malformed annotation value. Its message names the
-// exact annotation key and the problem, per the admission-validation spec.
-type fieldError struct {
-	key    string
-	detail string
-}
-
-func (e *fieldError) message() string {
-	return fmt.Sprintf("annotation %q is invalid: %s", e.key, e.detail)
+// knownKeys is the closed set of r8r.io/* keys the shared parser accepts.
+var knownKeys = map[string]bool{
+	annReplicate:        true,
+	annTargetClusters:   true,
+	annTargetNamespaces: true,
+	annTargetName:       true,
+	annSourceHash:       true,
 }
 
 // parsedRequest is the validated form of the r8r.io/* annotations on one
-// object.
+// object, shaped for the admission-time policy pre-check.
 type parsedRequest struct {
 	// optedIn is true when r8r.io/replicate is exactly "true".
 	optedIn bool
 	// clusterSelector is the parsed target-clusters selector; nil when the
-	// annotation is absent.
+	// annotation is absent or empty (the satisfiability check is skipped).
 	clusterSelector labels.Selector
 	// clusterSelectorRaw is the raw annotation value, for messages.
 	clusterSelectorRaw string
@@ -91,78 +97,47 @@ func hasR8RAnnotations(ann map[string]string) bool {
 	return false
 }
 
-// parseRequest validates the r8r.io/* annotations. It returns a fieldError
-// naming the offending annotation for any malformed value; unknown r8r.io/*
-// keys are collected on the result instead of failing. sourceNamespace is used
-// as the target-namespace default. On error the partially parsed result is
-// still returned (for warning rendering).
-func parseRequest(ann map[string]string, sourceNamespace string) (*parsedRequest, *fieldError) {
+// parseRequest validates the r8r.io/* annotations through the shared parser.
+// It returns an error naming every offending annotation for malformed values;
+// unknown r8r.io/* keys are collected on the result instead of failing.
+// sourceNamespace is used as the target-namespace default. On error the
+// partially parsed result is still returned (for warning rendering).
+func parseRequest(ann map[string]string, sourceNamespace string) (*parsedRequest, error) {
 	p := &parsedRequest{}
 
-	for k := range ann {
-		if !strings.HasPrefix(k, annPrefix) {
+	// Filter unknown r8r.io/* keys: the shared parser rejects them (the
+	// controller fails loudly on typos), but at admission time they only
+	// warn — see the package comment.
+	filtered := make(map[string]string, len(ann))
+	for k, v := range ann {
+		if strings.HasPrefix(k, annPrefix) && !knownKeys[k] {
+			p.unknownKeys = append(p.unknownKeys, k)
 			continue
 		}
-		switch k {
-		case annReplicate, annTargetClusters, annTargetNamespaces, annTargetName, annSourceHash:
-		default:
-			p.unknownKeys = append(p.unknownKeys, k)
-		}
+		filtered[k] = v
 	}
 
-	if v, ok := ann[annReplicate]; ok {
-		switch v {
-		case "true":
-			p.optedIn = true
-		case "false":
-			// Explicitly not opted in.
-		default:
-			return p, &fieldError{annReplicate, fmt.Sprintf("must be %q or %q, got %q", "true", "false", v)}
-		}
+	p.optedIn = annotations.Replicates(filtered)
+	rawSelector, selectorPresent := filtered[annTargetClusters]
+	if selectorPresent {
+		p.clusterSelectorRaw = rawSelector
+		p.emptyClusterSelector = strings.TrimSpace(rawSelector) == ""
 	}
 
-	if v, ok := ann[annTargetClusters]; ok {
-		p.clusterSelectorRaw = v
-		trimmed := strings.TrimSpace(v)
-		if trimmed == "*" {
-			return p, &fieldError{annTargetClusters,
-				`explicit "*" is not supported; select all clusters with an empty label selector on a ReplicationPolicy instead`}
-		}
-		if trimmed == "" {
-			p.emptyClusterSelector = true
-		}
-		sel, err := labels.Parse(trimmed)
-		if err != nil {
-			return p, &fieldError{annTargetClusters, fmt.Sprintf("not a valid label selector: %v", err)}
-		}
-		p.clusterSelector = sel
+	req, err := annotations.Parse(filtered)
+	if err != nil {
+		return p, err
+	}
+	if req == nil {
+		// Not opted in (replicate absent or "false"); all annotations are
+		// valid — the handler admits without a policy pre-check.
+		return p, nil
 	}
 
-	if v, ok := ann[annTargetNamespaces]; ok {
-		for _, raw := range strings.Split(v, ",") {
-			ns := strings.TrimSpace(raw)
-			if ns == "" {
-				return p, &fieldError{annTargetNamespaces,
-					fmt.Sprintf("contains an empty entry (value %q); expected a comma-separated list of namespace names", v)}
-			}
-			if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
-				return p, &fieldError{annTargetNamespaces,
-					fmt.Sprintf("%q is not a valid namespace name: %s", ns, strings.Join(errs, "; "))}
-			}
-			p.targetNamespaces = append(p.targetNamespaces, ns)
-		}
-	} else {
-		// Default per spec: the source namespace.
-		p.targetNamespaces = []string{sourceNamespace}
+	if selectorPresent && !p.emptyClusterSelector {
+		p.clusterSelector = req.ClusterSelector
 	}
-
-	if v, ok := ann[annTargetName]; ok {
-		if errs := validation.IsDNS1123Subdomain(v); len(errs) > 0 {
-			return p, &fieldError{annTargetName,
-				fmt.Sprintf("%q is not a valid object name: %s", v, strings.Join(errs, "; "))}
-		}
-		p.targetName = v
-	}
-
+	p.targetNamespaces = req.EffectiveNamespaces(sourceNamespace)
+	p.targetName = req.TargetName
 	return p, nil
 }

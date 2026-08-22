@@ -17,18 +17,29 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
+	"net/http"
 	"os"
+	"strings"
+	"sync"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	crcluster "sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -36,6 +47,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
+	"github.com/moeritze/k8s-r8r/internal/cluster"
+	"github.com/moeritze/k8s-r8r/internal/controller/request"
+	"github.com/moeritze/k8s-r8r/internal/discovery"
+	// The ClusterAPI provider registers itself as "cluster-api" in the
+	// discovery registry via its init function.
+	_ "github.com/moeritze/k8s-r8r/internal/discovery/capi"
+	"github.com/moeritze/k8s-r8r/internal/engine"
+	r8rwebhook "github.com/moeritze/k8s-r8r/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -51,6 +70,202 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
+// supportedKinds maps --allowed-kinds resource names (lowercase plural, as
+// they appear in RBAC) to the GroupVersionKinds the pipeline handles.
+var supportedKinds = map[string]schema.GroupVersionKind{
+	"secrets":    {Group: "", Version: "v1", Kind: "Secret"},
+	"configmaps": {Group: "", Version: "v1", Kind: "ConfigMap"},
+}
+
+// parseAllowedKinds turns the --allowed-kinds flag value into the three
+// per-component views of the kind allowlist: the request controller's GVK
+// allowlist, the engine's kind->GVK map, and the spoke RBAC scope used at
+// bootstrap.
+func parseAllowedKinds(raw string) ([]schema.GroupVersionKind, map[string]schema.GroupVersionKind, cluster.RBACScope, error) {
+	var allowlist []schema.GroupVersionKind
+	kindGVKs := map[string]schema.GroupVersionKind{}
+	var scope cluster.RBACScope
+	for _, part := range strings.Split(raw, ",") {
+		name := strings.ToLower(strings.TrimSpace(part))
+		if name == "" {
+			continue
+		}
+		gvk, ok := supportedKinds[name]
+		if !ok {
+			return nil, nil, scope, fmt.Errorf(
+				"unsupported kind %q in --allowed-kinds (supported: secrets, configmaps)", name)
+		}
+		if _, dup := kindGVKs[gvk.Kind]; dup {
+			continue
+		}
+		allowlist = append(allowlist, gvk)
+		kindGVKs[gvk.Kind] = gvk
+		scope.Resources = append(scope.Resources, cluster.ScopedResource{Group: gvk.Group, Resource: name})
+	}
+	if len(allowlist) == 0 {
+		return nil, nil, scope, fmt.Errorf("--allowed-kinds must name at least one kind")
+	}
+	return allowlist, kindGVKs, scope, nil
+}
+
+// rotatingAuth is an http.RoundTripper that authenticates every request with
+// a currently valid short-lived ServiceAccount token from the Rotator, so a
+// spoke's clients stay authenticated across token refreshes without ever
+// being rebuilt.
+type rotatingAuth struct {
+	rotator *cluster.Rotator
+	next    http.RoundTripper
+}
+
+// RoundTrip implements http.RoundTripper.
+func (r *rotatingAuth) RoundTrip(req *http.Request) (*http.Response, error) {
+	cfg, err := r.rotator.Config(req.Context())
+	if err != nil {
+		return nil, fmt.Errorf("refreshing spoke token: %w", err)
+	}
+	req = req.Clone(req.Context())
+	req.Header.Set("Authorization", "Bearer "+cfg.BearerToken)
+	return r.next.RoundTrip(req)
+}
+
+// spokeWirer bridges discovery events to the per-spoke bootstrap and the
+// cluster runtime manager (Register -> bootstrap -> runtime flow):
+//
+//  1. A discovery Register/Update event for a READY cluster starts a
+//     bootstrap goroutine (with backoff retry) for that cluster, once.
+//  2. The bootstrap reads the provider's admin kubeconfig from the
+//     CredentialRef Secret on the hub (uncached read; used exactly once per
+//     bootstrap, design D5), runs cluster.BootstrapSpoke (namespace, narrow
+//     SA + RBAC, first token mint) and obtains the token Rotator.
+//  3. The spoke's rest config is stripped of the admin credential and wired
+//     to the Rotator via a transport middleware, then registered with the
+//     cluster runtime manager, which probes it and starts its runtime.
+//  4. A Deregister event (or readiness dropping away) cancels any in-flight
+//     bootstrap and deregisters the runtime.
+type spokeWirer struct {
+	ctx      context.Context
+	hub      client.Reader
+	clusters *cluster.Manager
+	scope    cluster.RBACScope
+
+	mu     sync.Mutex
+	spokes map[string]context.CancelFunc
+}
+
+func newSpokeWirer(ctx context.Context, hub client.Reader, clusters *cluster.Manager, scope cluster.RBACScope) *spokeWirer {
+	return &spokeWirer{
+		ctx:      ctx,
+		hub:      hub,
+		clusters: clusters,
+		scope:    scope,
+		spokes:   map[string]context.CancelFunc{},
+	}
+}
+
+// Handle is the discovery.EventHandler entry point. It never blocks: all
+// network work happens in per-cluster goroutines.
+func (w *spokeWirer) Handle(e discovery.Event) {
+	switch e.Type {
+	case discovery.EventRegister, discovery.EventUpdate:
+		if e.Record.Ready {
+			w.ensure(e.Record)
+		} else {
+			w.drop(e.Record.Name)
+		}
+	case discovery.EventDeregister:
+		w.drop(e.Record.Name)
+	}
+}
+
+// ensure starts the bootstrap flow for a cluster unless it is already
+// bootstrapped or in flight.
+func (w *spokeWirer) ensure(rec discovery.ClusterRecord) {
+	w.mu.Lock()
+	if _, active := w.spokes[rec.Name]; active {
+		w.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(w.ctx)
+	w.spokes[rec.Name] = cancel
+	w.mu.Unlock()
+	go w.run(ctx, rec)
+}
+
+// drop cancels any in-flight bootstrap and stops the cluster's runtime.
+func (w *spokeWirer) drop(name string) {
+	w.mu.Lock()
+	cancel, active := w.spokes[name]
+	delete(w.spokes, name)
+	w.mu.Unlock()
+	if active {
+		cancel()
+	}
+	w.clusters.Deregister(name)
+}
+
+// run bootstraps one spoke, retrying with capped exponential backoff until it
+// succeeds or the cluster leaves inventory.
+func (w *spokeWirer) run(ctx context.Context, rec discovery.ClusterRecord) {
+	const (
+		baseDelay = 5 * time.Second
+		maxDelay  = 5 * time.Minute
+	)
+	delay := baseDelay
+	for {
+		err := w.bootstrap(ctx, rec)
+		if err == nil {
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		// Errors reference the credential Secret by name only; no secret
+		// material ever reaches logs (design D5).
+		setupLog.Error(err, "Failed to bootstrap spoke; will retry",
+			"cluster", rec.Name, "retryAfter", delay)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		if delay *= 2; delay > maxDelay {
+			delay = maxDelay
+		}
+	}
+}
+
+// bootstrap performs one bootstrap attempt and, on success, registers the
+// spoke's rotator-backed rest config with the cluster runtime manager.
+func (w *spokeWirer) bootstrap(ctx context.Context, rec discovery.ClusterRecord) error {
+	adminCfg, err := cluster.LoadAdminConfig(ctx, w.hub, rec.CredentialRef)
+	if err != nil {
+		return err
+	}
+	result, err := cluster.BootstrapSpoke(ctx, adminCfg, w.scope)
+	if err != nil {
+		return err
+	}
+	primed, err := result.Rotator.Config(ctx)
+	if err != nil {
+		return err
+	}
+	// Steady-state config: host/TLS of the spoke, no static credential;
+	// every request authenticates with a fresh short-lived SA token.
+	spokeCfg := rest.AnonymousClientConfig(primed)
+	rotator := result.Rotator
+	spokeCfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+		return &rotatingAuth{rotator: rotator, next: rt}
+	})
+	w.clusters.Register(rec.Name, spokeCfg)
+	setupLog.Info("Bootstrapped spoke and registered runtime", "cluster", rec.Name)
+	return nil
+}
+
+// RBAC needed by main wiring beyond the controllers' own markers: watching
+// ClusterAPI Cluster objects for discovery. (Kubeconfig credential Secrets
+// are covered by the request controller's secrets get;list;watch.)
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters,verbs=get;list;watch
+
 // nolint:gocyclo
 func main() {
 	var metricsAddr string
@@ -60,6 +275,10 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var discoveryProviderName string
+	var hubName string
+	var allowedKinds string
+	var spokeResync time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -78,6 +297,14 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&discoveryProviderName, "discovery-provider", "cluster-api",
+		"The cluster discovery provider to use (registered providers: cluster-api).")
+	flag.StringVar(&hubName, "hub-name", "hub",
+		"The source-cluster identity stamped onto replicas.")
+	flag.StringVar(&allowedKinds, "allowed-kinds", "secrets,configmaps",
+		"Comma-separated resource names enabled for replication (supported: secrets, configmaps).")
+	flag.DurationVar(&spokeResync, "spoke-resync", 0,
+		"Drift resync interval for spoke informers and periodic reconciles (0 uses the engine default of 10h).")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -85,6 +312,12 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	allowlist, kindGVKs, rbacScope, err := parseAllowedKinds(allowedKinds)
+	if err != nil {
+		setupLog.Error(err, "Invalid --allowed-kinds")
+		os.Exit(1)
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -153,7 +386,8 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	hubCfg := ctrl.GetConfigOrDie()
+	mgr, err := ctrl.NewManager(hubCfg, ctrl.Options{
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -177,6 +411,89 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The signal-handler context bounds everything outside the manager's own
+	// runnable lifecycle (spoke bootstrap goroutines).
+	ctx := ctrl.SetupSignalHandler()
+
+	// Discovery provider, selected by name from the registry providers
+	// register into (the capi import registers "cluster-api").
+	provider, err := discovery.New(discoveryProviderName, discovery.Options{HubConfig: hubCfg})
+	if err != nil {
+		setupLog.Error(err, "Failed to construct discovery provider", "provider", discoveryProviderName)
+		os.Exit(1)
+	}
+
+	// Cluster runtime manager: every spoke runtime carries the operator
+	// scheme and a cache-wide managed-by label selector, so all spoke watches
+	// (the engine's metadata-only drift informers) are filtered server-side
+	// to operator-managed objects.
+	managedSelector := labels.SelectorFromSet(labels.Set{request.ManagedByLabel: request.ManagedByValue})
+	clusterManager := cluster.NewManager(cluster.WithRuntimeFactory(
+		cluster.DefaultRuntimeFactory(func(o *crcluster.Options) {
+			o.Scheme = scheme
+			o.Cache.DefaultLabelSelector = managedSelector
+		})))
+
+	// Register -> bootstrap -> runtime flow: discovery events drive one-shot
+	// spoke bootstrap (admin kubeconfig used once, then rotated SA tokens)
+	// and runtime registration. Subscriptions must precede provider start.
+	wirer := newSpokeWirer(ctx, mgr.GetAPIReader(), clusterManager, rbacScope)
+	provider.Subscribe(wirer.Handle)
+
+	// Request controller (annotation shim): re-resolves targets on cluster
+	// inventory changes via the discovery subscription.
+	requestReconciler := &request.Reconciler{
+		Inventory: provider,
+		Allowlist: allowlist,
+	}
+	if err := requestReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to set up request controller")
+		os.Exit(1)
+	}
+	provider.Subscribe(requestReconciler.ClusterEventHandler())
+
+	// Replication engine: pushes replicas through SA-token clients from the
+	// cluster runtime manager and hooks its lifecycle events for drift
+	// informers and re-enqueues.
+	engineReconciler := &engine.Reconciler{
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		Recorder:      mgr.GetEventRecorderFor("replication-engine"),
+		Transport:     engine.NewPushTransport(clusterManager, "k8s-r8r"),
+		Clusters:      engine.ProviderInventory{Provider: provider},
+		ClusterEvents: clusterManager,
+		Options: engine.Options{
+			HubName:     hubName,
+			DriftResync: spokeResync,
+			KindGVKs:    kindGVKs,
+		},
+	}
+	if err := engineReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to set up replication engine")
+		os.Exit(1)
+	}
+
+	// Advisory admission webhook (design D6). Scaffold convention: disabled
+	// only with ENABLE_WEBHOOKS=false (e.g. when running locally without
+	// serving certificates).
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := r8rwebhook.Setup(mgr); err != nil {
+			setupLog.Error(err, "Failed to set up admission webhook")
+			os.Exit(1)
+		}
+	}
+
+	// The provider and the cluster runtime manager run as manager runnables
+	// (leader-gated, stopped with the manager).
+	if err := mgr.Add(provider); err != nil {
+		setupLog.Error(err, "Failed to add discovery provider to manager")
+		os.Exit(1)
+	}
+	if err := mgr.Add(clusterManager); err != nil {
+		setupLog.Error(err, "Failed to add cluster runtime manager to manager")
+		os.Exit(1)
+	}
+
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -189,7 +506,7 @@ func main() {
 	}
 
 	setupLog.Info("Starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
