@@ -52,7 +52,7 @@ When a target namespace does not exist and the effective policy sets `allowNames
 - **THEN** the namespace is created and the replica placed in it
 
 ### Requirement: Inventory and garbage collection
-The engine SHALL record every created replica in the `Replication` object's inventory and SHALL delete replicas (honoring `revocationPolicy` where applicable) when: the source is deleted (a finalizer on the source blocks its deletion until replica cleanup completes), the request annotations are removed, a target leaves the resolved selection (cluster label change, selector change, namespace removed from the list), or a cluster is deregistered while reachable. No code path may lose track of a created replica.
+The engine SHALL record every created replica in the `Replication` object's inventory and SHALL delete replicas (honoring `revocationPolicy` where applicable) when: the source is deleted (a finalizer on the source blocks its deletion until replica cleanup completes), the request annotations are removed, or a target leaves the resolved selection (cluster label change, selector change, namespace removed from the list). Cluster deregistration releases that cluster's inventory entries with a `ClusterGone` event without deleting replicas on the spoke — after deregistration the engine holds no credential for the cluster, so remote deletion is impossible; the clean removal path is deselecting the cluster (label/selector change) before deregistering it. No code path may lose track of a created replica.
 
 #### Scenario: Source deletion cleans the fleet
 - **WHEN** a replicated Secret is deleted on the hub
