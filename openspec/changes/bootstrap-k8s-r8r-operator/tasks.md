@@ -14,7 +14,7 @@
 
 - [x] 3.1 Implement policy evaluation library: default deny, all-dimensions-match-single-policy, union across policies; pure functions with table-driven tests
 - [x] 3.2 Implement option resolution (effective conflictPolicy, namespace creation, revocationPolicy) when multiple policies permit a target
-- [ ] 3.3 Policy revocation semantics: detect permission withdrawal on reconcile, mark `PolicyRevoked`, act per revocationPolicy
+- [x] 3.3 Policy revocation semantics: detect permission withdrawal on reconcile, mark `PolicyRevoked`, act per revocationPolicy
 
 ## 4. Request Controller (annotation shim)
 
@@ -32,13 +32,13 @@
 
 ## 6. Replication Engine
 
-- [ ] 6.1 Unstructured fanout pipeline: payload extraction, server-managed/immutable field stripping, managed-by + source-ref labels, source-hash annotation
-- [ ] 6.2 Transport interface + push implementation (SA-token clients from cluster runtimes)
-- [ ] 6.3 Workqueue keyed `(source, targetCluster)`; per-target backoff independent of other targets
-- [ ] 6.4 Conflict handling: Fail (default, condition), Overwrite (policy+request gated, incl. immutable-field delete+recreate), Adopt (hash-equality only)
-- [ ] 6.5 Namespace ensure (policy-gated, labeled, never GC'd by engine)
-- [ ] 6.6 Inventory bookkeeping + GC paths: source deleted (finalizer-blocked cleanup), annotation removed, target left selection, cluster deregistered; unreachable-cluster retry + `ClusterGone` release
-- [ ] 6.7 Drift detection: per-cluster metadata-only filtered informers per replicated GVK, hash-mismatch/deletion enqueue, periodic resync fallback
+- [x] 6.1 Unstructured fanout pipeline: payload extraction, server-managed/immutable field stripping, managed-by + source-ref labels, source-hash annotation
+- [x] 6.2 Transport interface + push implementation (SA-token clients from cluster runtimes)
+- [x] 6.3 Workqueue keyed `(source, targetCluster)`; per-target backoff independent of other targets
+- [x] 6.4 Conflict handling: Fail (default, condition), Overwrite (policy+request gated, incl. immutable-field delete+recreate), Adopt (hash-equality only)
+- [x] 6.5 Namespace ensure (policy-gated, labeled, never GC'd by engine)
+- [x] 6.6 Inventory bookkeeping + GC paths: source deleted (finalizer-blocked cleanup), annotation removed, target left selection, cluster deregistered; unreachable-cluster retry + `ClusterGone` release
+- [x] 6.7 Drift detection: per-cluster metadata-only filtered informers per replicated GVK, hash-mismatch/deletion enqueue, periodic resync fallback
 
 ## 7. Admission Webhook
 
