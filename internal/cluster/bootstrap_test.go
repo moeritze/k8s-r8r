@@ -25,7 +25,7 @@ func TestRBACScopeRules(t *testing.T) {
 			want: []rbacv1.PolicyRule{
 				{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: replicaVerbs},
 				{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: replicaVerbs},
-				{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "create"}},
+				{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "create", "patch"}},
 			},
 		},
 		{
@@ -33,14 +33,14 @@ func TestRBACScopeRules(t *testing.T) {
 			scope: RBACScope{Resources: []ScopedResource{{Group: "", Resource: "secrets"}}},
 			want: []rbacv1.PolicyRule{
 				{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: replicaVerbs},
-				{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "create"}},
+				{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "create", "patch"}},
 			},
 		},
 		{
 			name:  "empty scope still allows namespace ensure only",
 			scope: RBACScope{},
 			want: []rbacv1.PolicyRule{
-				{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "create"}},
+				{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "create", "patch"}},
 			},
 		},
 		{
@@ -48,7 +48,7 @@ func TestRBACScopeRules(t *testing.T) {
 			scope: RBACScope{Resources: []ScopedResource{{Group: "apps", Resource: "deployments"}}},
 			want: []rbacv1.PolicyRule{
 				{APIGroups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: replicaVerbs},
-				{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "create"}},
+				{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "create", "patch"}},
 			},
 		},
 	}

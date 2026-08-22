@@ -79,8 +79,9 @@ func DefaultRBACScope() RBACScope {
 }
 
 // Rules renders the scope into ClusterRole policy rules: full replica verbs
-// on each scoped resource, plus get/create on namespaces (namespace-ensure;
-// never delete).
+// on each scoped resource, plus get/create/patch on namespaces
+// (namespace-ensure happens via server-side apply, whose create-on-PATCH
+// path requires both the patch and create verbs; never delete).
 func (s RBACScope) Rules() []rbacv1.PolicyRule {
 	rules := make([]rbacv1.PolicyRule, 0, len(s.Resources)+1)
 	for _, r := range s.Resources {
@@ -93,7 +94,7 @@ func (s RBACScope) Rules() []rbacv1.PolicyRule {
 	rules = append(rules, rbacv1.PolicyRule{
 		APIGroups: []string{""},
 		Resources: []string{"namespaces"},
-		Verbs:     []string{"get", "create"},
+		Verbs:     []string{"get", "create", "patch"},
 	})
 	return rules
 }

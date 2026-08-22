@@ -60,7 +60,8 @@ equal fleet-admin compromise. Instead:
    and uses it **exactly once per bootstrap** to create on the spoke:
    the `k8s-r8r-system` namespace, the `k8s-r8r` ServiceAccount, the
    `k8s-r8r-replicator` ClusterRole (verbs on exactly the allowlisted
-   resource kinds, plus `get`/`create` on namespaces — never delete),
+   resource kinds, plus `get`/`create`/`patch` on namespaces
+   (namespace-ensure uses server-side apply) — never delete),
    its binding, and a namespaced Role that lets the SA mint its own
    tokens.
 2. All steady-state traffic authenticates with **short-lived, rotated SA
