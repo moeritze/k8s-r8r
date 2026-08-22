@@ -47,9 +47,9 @@
 
 ## 8. Observability & HA
 
-- [ ] 8.1 Prometheus metrics per observability spec (bounded label cardinality); connectivity + workqueue metrics
-- [ ] 8.2 Rate-limited events on sources and Replications; secret-safe telemetry audit (hashes only, lint/review checklist)
-- [ ] 8.3 Leader election, health/readiness probes (spoke outage must not flip readiness); status-write skipping when unchanged
+- [x] 8.1 Prometheus metrics per observability spec (bounded label cardinality); connectivity + workqueue metrics
+- [x] 8.2 Rate-limited events on sources and Replications; secret-safe telemetry audit (hashes only, lint/review checklist)
+- [x] 8.3 Leader election, health/readiness probes (spoke outage must not flip readiness); status-write skipping when unchanged
 
 ## 9. Packaging & Docs
 

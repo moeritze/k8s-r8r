@@ -11,6 +11,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
+
+	"github.com/moeritze/k8s-r8r/internal/telemetry"
 )
 
 // DefaultTokenTTL is the requested ServiceAccount token lifetime.
@@ -181,8 +183,10 @@ func (r *Rotator) refreshLocked(ctx context.Context) error {
 	}
 	token, expiresAt, err := r.minter(ctx, mintCfg, r.ttl)
 	if err != nil {
+		telemetry.IncTokenRotation(false)
 		return fmt.Errorf("cluster: refreshing token for %s/%s: %w", Namespace, ServiceAccountName, err)
 	}
+	telemetry.IncTokenRotation(true)
 	r.token = token
 	r.issuedAt = now
 	r.expiresAt = expiresAt

@@ -85,6 +85,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
+	"github.com/moeritze/k8s-r8r/internal/telemetry"
 )
 
 // Path is the HTTP path the validating webhook is served on. It must match
@@ -142,6 +143,7 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 	parsed, ferr := parseRequest(meta.Annotations, req.Namespace)
 	warnings := warningsFor(parsed)
 	if ferr != nil {
+		telemetry.IncWebhookDenial("annotations")
 		return admission.Denied(ferr.Error()).WithWarnings(warnings...)
 	}
 
@@ -159,6 +161,7 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 	}
 
 	if d := checkPolicies(policies.Items, req.Kind.Kind, req.Namespace, parsed); d != nil {
+		telemetry.IncWebhookDenial(d.dimension)
 		return admission.Denied(fmt.Sprintf(
 			"replication request denied (advisory pre-check; dimension %s): %s "+
 				"The controller re-evaluates policy authoritatively at reconcile time.",

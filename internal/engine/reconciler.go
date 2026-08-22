@@ -44,6 +44,7 @@ import (
 	"github.com/moeritze/k8s-r8r/internal/cluster"
 	"github.com/moeritze/k8s-r8r/internal/discovery"
 	"github.com/moeritze/k8s-r8r/internal/policy"
+	"github.com/moeritze/k8s-r8r/internal/telemetry"
 )
 
 // Field-index names the engine registers on the hub cache. Prefixed so they
@@ -173,6 +174,9 @@ type Reconciler struct {
 	renderer Renderer
 	drift    *DriftDetector
 	backoff  *backoffTracker
+	// limiter rate-limits events per (Replication, reason) so flapping
+	// targets cannot flood the event stream (observability spec).
+	limiter *telemetry.EventLimiter
 
 	initOnce sync.Once
 	mu       sync.Mutex
@@ -191,6 +195,7 @@ func (r *Reconciler) init() {
 		r.Options = r.Options.withDefaults()
 		r.renderer = Renderer{HubName: r.Options.HubName}
 		r.backoff = newBackoffTracker(r.Options.BackoffBase, r.Options.BackoffMax)
+		r.limiter = telemetry.NewEventLimiter(0)
 		r.lastResults = map[types.UID]policy.Result{}
 	})
 }
@@ -212,6 +217,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.Client.Get(ctx, req.NamespacedName, rep); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.backoff.Forget(req.NamespacedName)
+			telemetry.ForgetReplicas(req.NamespacedName.String())
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -350,10 +356,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	states = append(states, gcStates...)
 	delays = append(delays, gcDelays...)
 
+	// Per-cluster replica gauges (observability spec): attribute this
+	// Replication's per-cluster tallies; the collector sums across all
+	// Replications at scrape time.
+	telemetry.ObserveReplicas(nn.String(), replicaCountsByCluster(states))
+
 	next := buildStatus(rep, srcHash, states, inv, revokedRetained, metav1.Now())
+	prevReady := apimeta.FindStatusCondition(rep.Status.Conditions, r8rv1alpha1.ReplicationConditionReady)
 	if err := r.writeStatusIfChanged(ctx, rep, next); err != nil {
 		return ctrl.Result{}, err
 	}
+	r.emitTransitionEvents(rep, prevReady,
+		apimeta.FindStatusCondition(next.Conditions, r8rv1alpha1.ReplicationConditionReady))
 
 	res := ctrl.Result{RequeueAfter: r.Options.DriftResync}
 	if d := minDelay(delays); d > 0 {
@@ -432,6 +446,7 @@ func (r *Reconciler) applyRevocations(
 		switch r.effectiveRevocationPolicy(policies, rev, src) {
 		case r8rv1alpha1.RevocationPolicyRetain:
 			anyRetained = true
+			telemetry.IncRevocation("retain")
 			for _, e := range entries {
 				retained[KeyForEntry(e)] = true
 			}
@@ -439,6 +454,7 @@ func (r *Reconciler) applyRevocations(
 				"policy no longer permits target %s/%s; retaining %d replica(s) without further updates (revocationPolicy Retain)",
 				rev.Target.ClusterName, rev.Target.Namespace, len(entries)))
 		case r8rv1alpha1.RevocationPolicyDelete:
+			telemetry.IncRevocation("delete")
 			revokedDelete[nsKey{rev.Target.ClusterName, rev.Target.Namespace}] = true
 			r.event(rep, "Warning", r8rv1alpha1.ReasonPolicyRevoked, fmt.Sprintf(
 				"policy no longer permits target %s/%s; deleting %d replica(s) (revocationPolicy Delete)",
@@ -508,6 +524,7 @@ func (r *Reconciler) deniedState(
 	default:
 		st.Reason = r8rv1alpha1.ReasonPolicyDenied
 		st.Message = dec.Reason
+		telemetry.IncPolicyDenial(dec.DeniedDimension)
 	}
 	return st
 }
@@ -570,10 +587,12 @@ func (r *Reconciler) applyTarget(
 		decision := DecideConflict(existing, src.GetUID(), hash, eff.AllowedConflictPolicies)
 		switch decision.Action {
 		case ActionFail:
+			telemetry.IncConflict("fail")
 			r.event(rep, "Warning", r8rv1alpha1.ReasonConflict,
 				fmt.Sprintf("target %s: %s", replicaRef(s.cluster, s.namespace, s.name), decision.Message))
 			return fail(r8rv1alpha1.ReasonConflict, decision.Message, false)
 		case ActionAdopt:
+			telemetry.IncConflict("adopt")
 			patch := r.renderer.AdoptPatch(src, gvk, s.namespace, s.name, hash)
 			if applyErr := r.Transport.Apply(ctx, s.cluster, patch); applyErr != nil {
 				return fail(classifyTransportErr(applyErr), applyErr.Error(), true)
@@ -581,6 +600,7 @@ func (r *Reconciler) applyTarget(
 			r.event(rep, "Normal", "Adopted",
 				fmt.Sprintf("adopted existing object %s (content hash equal)", replicaRef(s.cluster, s.namespace, s.name)))
 		case ActionOverwrite:
+			telemetry.IncConflict("overwrite")
 			if applyErr := r.applyWithRecreate(ctx, s.cluster, desired); applyErr != nil {
 				return fail(classifyTransportErr(applyErr), applyErr.Error(), true)
 			}
@@ -724,6 +744,8 @@ func (r *Reconciler) collectGarbage(
 		}
 		r.backoff.Success(nn, e.ClusterName)
 		*inv = removeEntry(*inv, KeyForEntry(e))
+		r.event(rep, "Normal", "CleanedUp",
+			fmt.Sprintf("cleaned up replica %s", replicaRef(e.ClusterName, e.Namespace, e.Name)))
 	}
 	return states, delays
 }
@@ -747,6 +769,8 @@ func (r *Reconciler) reconcileDeletion(ctx context.Context, nn types.NamespacedN
 		}
 		r.backoff.Forget(nn)
 		r.forgetResult(rep.UID)
+		telemetry.ForgetReplicas(nn.String())
+		r.limiter.Forget(string(rep.UID))
 		return ctrl.Result{}, nil
 	}
 
@@ -815,11 +839,57 @@ func (r *Reconciler) gvkForEntry(e r8rv1alpha1.InventoryEntry) (schema.GroupVers
 }
 
 // event emits an event on the Replication when a recorder is configured.
-// Event messages never contain payload data.
+// Event messages never contain payload data. Emission is rate-limited per
+// (Replication, reason): identical repeats within the limiter cooldown are
+// coalesced so flapping targets cannot flood the event stream.
 func (r *Reconciler) event(rep *r8rv1alpha1.Replication, eventType, reason, message string) {
-	if r.Recorder != nil {
-		r.Recorder.Event(rep, eventType, reason, message)
+	if r.Recorder == nil {
+		return
 	}
+	if r.limiter != nil && !r.limiter.Allow(string(rep.UID), reason, message) {
+		return
+	}
+	r.Recorder.Event(rep, eventType, reason, message)
+}
+
+// emitTransitionEvents turns Ready-condition transitions into lifecycle
+// events (observability spec: replicated / denied), so events fire on
+// state changes rather than on every reconcile.
+func (r *Reconciler) emitTransitionEvents(rep *r8rv1alpha1.Replication, prev, next *metav1.Condition) {
+	if next == nil {
+		return
+	}
+	switch {
+	case next.Status == metav1.ConditionTrue &&
+		(prev == nil || prev.Status != metav1.ConditionTrue):
+		r.event(rep, "Normal", "Replicated", next.Message)
+	case next.Status == metav1.ConditionFalse &&
+		next.Reason == r8rv1alpha1.ReasonPolicyDenied &&
+		(prev == nil || prev.Reason != next.Reason):
+		r.event(rep, "Warning", r8rv1alpha1.ReasonPolicyDenied, next.Message)
+	}
+}
+
+// replicaCountsByCluster tallies per-target-cluster desired/ready/failed
+// counts for the replica gauges. Slot-less states (no cluster) are skipped.
+func replicaCountsByCluster(states []targetState) map[string]telemetry.ReplicaCounts {
+	out := map[string]telemetry.ReplicaCounts{}
+	for _, s := range states {
+		if s.Cluster == "" {
+			continue
+		}
+		c := out[s.Cluster]
+		if s.Desired {
+			c.Desired++
+		}
+		if s.Ready {
+			c.Ready++
+		} else {
+			c.Failed++
+		}
+		out[s.Cluster] = c
+	}
+	return out
 }
 
 func (r *Reconciler) previousResult(uid types.UID) (policy.Result, bool) {

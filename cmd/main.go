@@ -54,6 +54,7 @@ import (
 	// discovery registry via its init function.
 	_ "github.com/moeritze/k8s-r8r/internal/discovery/capi"
 	"github.com/moeritze/k8s-r8r/internal/engine"
+	"github.com/moeritze/k8s-r8r/internal/telemetry"
 	r8rwebhook "github.com/moeritze/k8s-r8r/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
@@ -219,6 +220,7 @@ func (w *spokeWirer) run(ctx context.Context, rec discovery.ClusterRecord) {
 		if ctx.Err() != nil {
 			return
 		}
+		telemetry.IncSpokeBootstrap(false)
 		// Errors reference the credential Secret by name only; no secret
 		// material ever reaches logs (design D5).
 		setupLog.Error(err, "Failed to bootstrap spoke; will retry",
@@ -257,6 +259,7 @@ func (w *spokeWirer) bootstrap(ctx context.Context, rec discovery.ClusterRecord)
 		return &rotatingAuth{rotator: rotator, next: rt}
 	})
 	w.clusters.Register(rec.Name, spokeCfg)
+	telemetry.IncSpokeBootstrap(true)
 	setupLog.Info("Bootstrapped spoke and registered runtime", "cluster", rec.Name)
 	return nil
 }
@@ -392,8 +395,16 @@ func main() {
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
-		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "8180352a.r8r.io",
+		// HA / single-writer semantics (observability-operations spec):
+		// with --leader-elect, controller-runtime's lease-based election
+		// guarantees exactly one instance runs the reconcilers, the
+		// discovery provider, the cluster runtime manager, and the drift
+		// detector (all leader-gated runnables). Standby replicas still
+		// serve webhooks and probes and take over on lease expiry; state is
+		// recovered from CRs and status inventory, so failover neither
+		// duplicates nor orphans replicas.
+		LeaderElection:   enableLeaderElection,
+		LeaderElectionID: "8180352a.r8r.io",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -439,6 +450,18 @@ func main() {
 	// and runtime registration. Subscriptions must precede provider start.
 	wirer := newSpokeWirer(ctx, mgr.GetAPIReader(), clusterManager, rbacScope)
 	provider.Subscribe(wirer.Handle)
+
+	// Cluster connectivity + runtime-count metrics, sourced from the
+	// runtime manager's snapshot at scrape time (0 unreachable, 1 degraded,
+	// 2 reachable).
+	telemetry.SetClusterSnapshot(func() map[string]float64 {
+		snap := clusterManager.Snapshot()
+		out := make(map[string]float64, len(snap))
+		for name, conn := range snap {
+			out[name] = telemetry.ConnectivityValue(string(conn.State))
+		}
+		return out
+	})
 
 	// Request controller (annotation shim): re-resolves targets on cluster
 	// inventory changes via the discovery subscription.
@@ -500,7 +523,19 @@ func main() {
 		setupLog.Error(err, "Failed to set up health check")
 		os.Exit(1)
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+	// Readiness reflects exactly one thing: hub informers synced
+	// (observability-operations spec). The check's only input is the hub
+	// cache's sync state — spoke connectivity (cluster.Manager) is never
+	// consulted, so an unreachable target cluster cannot flip readiness;
+	// per-cluster outages surface in k8s_r8r_cluster_connectivity and
+	// Replication status instead. The gate runs on every replica (no
+	// leader election) so standbys are ready for failover.
+	hubSynced := telemetry.NewInformerSync(mgr.GetCache())
+	if err := mgr.Add(hubSynced); err != nil {
+		setupLog.Error(err, "Failed to add informer-sync readiness gate")
+		os.Exit(1)
+	}
+	if err := mgr.AddReadyzCheck("readyz", hubSynced.Check); err != nil {
 		setupLog.Error(err, "Failed to set up ready check")
 		os.Exit(1)
 	}

@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
+	"github.com/moeritze/k8s-r8r/internal/telemetry"
 )
 
 // defaultDriftResync is the fallback resync interval for spoke metadata
@@ -253,6 +254,7 @@ func (h *driftHandler) observe(obj interface{}) {
 	if uid == "" || srcNS == "" {
 		return
 	}
+	telemetry.IncDriftEvent(h.cluster)
 	h.d.mu.Lock()
 	ctx := h.d.ctx
 	h.d.mu.Unlock()
