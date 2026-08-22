@@ -77,19 +77,10 @@ jobs:
       - name: Build docker image (no push)
         run: docker build -t k8s-r8r:ci .
 
-  # -------------------------------------------------------------------------
-  # E2E SKELETON (hub + spoke kind fleet)
-  #
-  # TODO: activates when the e2e test suite lands (task group 10 of the
-  # bootstrap-k8s-r8r-operator change). Until then this job only runs on
-  # manual workflow_dispatch so the fleet bootstrap path stays exercised
-  # without gating every push/PR on a not-yet-existing test suite.
-  # To activate: remove the `if:` guard below.
-  # -------------------------------------------------------------------------
   e2e:
-    name: E2E (kind fleet, hub + spoke)
+    name: E2E (kind fleet, hub + 2 spokes)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 60
     needs:
       - lint
       - test
@@ -114,12 +105,9 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
           kind version
 
-      - name: Create kind fleet (hub + 1 spoke)
-        run: K8S_R8R_SPOKES=1 hack/kind-fleet.sh up
-
-      - name: Export fleet kubeconfigs
-        run: hack/kind-fleet.sh kubeconfigs
-
+      # The suite provisions its own fleet (hub + 2 spokes), builds and
+      # side-loads the operator image, installs the Helm chart, and simulates
+      # ClusterAPI inventory; see test/e2e.
       - name: Run e2e tests
         run: make test-e2e
 
