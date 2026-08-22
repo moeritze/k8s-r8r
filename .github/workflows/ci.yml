@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - feat/**
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check linter configuration
+        run: make lint-config
+
+      - name: Run linter
+        run: make lint
+
+  test:
+    name: Unit tests + envtest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests (unit + envtest)
+        run: make test
+
+  build:
+    name: Build binary + image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build manager binary
+        run: go build -o bin/manager cmd/main.go
+
+      - name: Build docker image (no push)
+        run: docker build -t k8s-r8r:ci .
+
+  # -------------------------------------------------------------------------
+  # E2E SKELETON (hub + spoke kind fleet)
+  #
+  # TODO: activates when the e2e test suite lands (task group 10 of the
+  # bootstrap-k8s-r8r-operator change). Until then this job only runs on
+  # manual workflow_dispatch so the fleet bootstrap path stays exercised
+  # without gating every push/PR on a not-yet-existing test suite.
+  # To activate: remove the `if:` guard below.
+  # -------------------------------------------------------------------------
+  e2e:
+    name: E2E (kind fleet, hub + spoke)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - lint
+      - test
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install the latest version of kind
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+
+      - name: Create kind fleet (hub + 1 spoke)
+        run: K8S_R8R_SPOKES=1 hack/kind-fleet.sh up
+
+      - name: Export fleet kubeconfigs
+        run: hack/kind-fleet.sh kubeconfigs
+
+      - name: Run e2e tests
+        run: make test-e2e
+
+      - name: Tear down kind fleet
+        if: always()
+        run: hack/kind-fleet.sh down

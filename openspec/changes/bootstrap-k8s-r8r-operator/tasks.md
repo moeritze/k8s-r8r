@@ -1,8 +1,8 @@
 ## 1. Project Scaffold & CI
 
-- [ ] 1.1 Initialize Go module + kubebuilder project (domain `r8r.io`, repo layout, license, README stub); verify `r8r.io` group naming decision before first release tag
-- [ ] 1.2 CI pipeline: lint (golangci-lint), unit tests, envtest, build; kind-based e2e job skeleton (hub + one spoke via kind clusters)
-- [ ] 1.3 Makefile/dev tooling: local kind fleet bootstrap script for manual testing
+- [x] 1.1 Initialize Go module + kubebuilder project (domain `r8r.io`, repo layout, license, README stub); verify `r8r.io` group naming decision before first release tag
+- [x] 1.2 CI pipeline: lint (golangci-lint), unit tests, envtest, build; kind-based e2e job skeleton (hub + one spoke via kind clusters)
+- [x] 1.3 Makefile/dev tooling: local kind fleet bootstrap script for manual testing
 
 ## 2. CRD APIs
 

@@ -257,3 +257,20 @@ endef
 define gomodver
 $(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
+
+##@ Local Kind Fleet (k8s-r8r dev tooling)
+
+# Local hub + spoke fleet for manual testing. See hack/kind-fleet.sh.
+# Override spoke count with K8S_R8R_SPOKES, e.g.: make fleet-up K8S_R8R_SPOKES=3
+
+.PHONY: fleet-up
+fleet-up: ## Create local kind fleet: r8r-hub + N spokes (K8S_R8R_SPOKES, default 1).
+	hack/kind-fleet.sh up
+
+.PHONY: fleet-down
+fleet-down: ## Delete all local kind fleet clusters.
+	hack/kind-fleet.sh down
+
+.PHONY: fleet-kubeconfigs
+fleet-kubeconfigs: ## Export per-cluster kubeconfigs to ./bin/kubeconfigs/.
+	hack/kind-fleet.sh kubeconfigs
