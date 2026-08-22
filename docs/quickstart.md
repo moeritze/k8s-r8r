@@ -3,10 +3,10 @@
 Get k8s-r8r running on a local kind cluster and walk through annotating a
 Secret for replication.
 
-> **Alpha notice:** k8s-r8r is v0/alpha. The flow below (annotation →
-> Replication → policy decision) works against a live cluster, but the full
-> cross-cluster path has not yet been exercised by the project's end-to-end
-> suite.
+> **Alpha notice:** k8s-r8r is v0/alpha. The full cross-cluster path
+> (annotation → Replication → policy decision → fanout, drift repair, GC)
+> is exercised continuously by the kind-fleet end-to-end suite
+> (`make test-e2e`, see `test/e2e/`).
 
 ## Prerequisites
 
