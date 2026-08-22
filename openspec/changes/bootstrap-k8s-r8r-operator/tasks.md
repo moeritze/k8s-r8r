@@ -18,10 +18,10 @@
 
 ## 4. Request Controller (annotation shim)
 
-- [ ] 4.1 Watch allowlisted kinds (Secret, ConfigMap) for `r8r.io/` annotations; parse/validate annotation contract
-- [ ] 4.2 Materialize/update/delete operator-owned `Replication` objects; origin field; reject hand-authored ones with `NotAuthoritative`
-- [ ] 4.3 Finalizer management on sources; annotation-removal cleanup path
-- [ ] 4.4 Kind-allowlist gate with event on non-allowlisted annotated kinds
+- [x] 4.1 Watch allowlisted kinds (Secret, ConfigMap) for `r8r.io/` annotations; parse/validate annotation contract
+- [x] 4.2 Materialize/update/delete operator-owned `Replication` objects; origin field; reject hand-authored ones with `NotAuthoritative`
+- [x] 4.3 Finalizer management on sources; annotation-removal cleanup path
+- [x] 4.4 Kind-allowlist gate with event on non-allowlisted annotated kinds
 
 ## 5. Discovery Layer
 
