@@ -1,0 +1,49 @@
+{{- if .Values.rbac.personas.enabled }}
+# Persona ClusterRoles for k8s-r8r consumers (not the operator itself).
+# Mirrors config/rbac/personas/. The chart creates the roles but never
+# binds k8s-r8r-policy-admin — bind it deliberately, to cluster admins
+# only: ReplicationPolicy is the security boundary (default deny,
+# allowlist-only).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-r8r-policy-admin
+  labels:
+    {{- include "k8s-r8r.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - r8r.io
+  resources:
+  - replicationpolicies
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+# Read-only Replication access. Users never write Replications (the
+# operator owns them), so read-only is the full user-facing surface. The
+# aggregation label folds these permissions into the built-in "view"
+# ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-r8r-replication-viewer
+  labels:
+    {{- include "k8s-r8r.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+- apiGroups:
+  - r8r.io
+  resources:
+  - replications
+  - replications/status
+  verbs:
+  - get
+  - list
+  - watch
+{{- end }}

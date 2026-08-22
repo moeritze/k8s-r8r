@@ -1,0 +1,23 @@
+k8s-r8r {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
+
+Nothing replicates yet: the policy universe is default-deny. Create a
+ReplicationPolicy (see docs/policies.md), then annotate a Secret or
+ConfigMap:
+
+  kubectl annotate secret my-secret \
+    r8r.io/replicate="true" \
+    "r8r.io/target-clusters=env=dev"
+
+Check status:
+
+  kubectl get replications -A
+
+{{- if not .Values.webhook.certManager.enabled }}
+{{- if .Values.webhook.enabled }}
+
+NOTE: webhook.certManager.enabled=false — make sure the TLS Secret
+"{{ include "k8s-r8r.webhookCertSecret" . }}" exists in {{ .Release.Namespace }}
+(keys tls.crt/tls.key) and set webhook.caBundle for apply-time feedback.
+The operator itself works without it (the webhook is advisory only).
+{{- end }}
+{{- end }}

@@ -1,0 +1,22 @@
+apiVersion: v2
+name: k8s-r8r
+description: >-
+  Kubernetes object replication operator: fans out Secrets and ConfigMaps
+  across namespaces and across a ClusterAPI-discovered fleet, gated by
+  default-deny ReplicationPolicy objects.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+# The advisory validating webhook uses CEL matchConditions, which are GA
+# since Kubernetes 1.30 (see docs/security.md, "Minimum supported Kubernetes
+# version").
+kubeVersion: ">=1.30.0-0"
+home: https://github.com/moeritze/k8s-r8r
+sources:
+  - https://github.com/moeritze/k8s-r8r
+keywords:
+  - replication
+  - secrets
+  - multi-cluster
+  - cluster-api
+  - fleet

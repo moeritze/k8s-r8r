@@ -53,10 +53,10 @@
 
 ## 9. Packaging & Docs
 
-- [ ] 9.1 Helm chart: CRDs, operator, webhook, RBAC personas, values for discovery provider config and kind allowlist
-- [ ] 9.2 Documentation: quickstart (kind fleet), annotation reference, policy authoring guide, GitOps/ArgoCD integration notes (ignore-labels, adoption story)
-- [ ] 9.3 Security documentation: threat model (push architecture, hub blast radius, D5/D6 reasoning), advisory-webhook doctrine, minimum supported Kubernetes version
-- [ ] 9.4 Uninstall/teardown docs incl. finalizer escape hatch and replica cleanup pre-step
+- [x] 9.1 Helm chart: CRDs, operator, webhook, RBAC personas, values for discovery provider config and kind allowlist
+- [x] 9.2 Documentation: quickstart (kind fleet), annotation reference, policy authoring guide, GitOps/ArgoCD integration notes (ignore-labels, adoption story)
+- [x] 9.3 Security documentation: threat model (push architecture, hub blast radius, D5/D6 reasoning), advisory-webhook doctrine, minimum supported Kubernetes version
+- [x] 9.4 Uninstall/teardown docs incl. finalizer escape hatch and replica cleanup pre-step
 
 ## 10. End-to-End Validation
 

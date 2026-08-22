@@ -1,0 +1,107 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "k8s-r8r.webhookServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "k8s-r8r.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 443
+      protocol: TCP
+      targetPort: webhook
+  selector:
+    {{- include "k8s-r8r.selectorLabels" . | nindent 4 }}
+---
+# Advisory validating webhook for replication requests (design D6).
+# Templated from config/webhook/manifests.yaml, which is HAND-MAINTAINED
+# (controller-gen markers cannot express matchConditions) — keep in sync.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ include "k8s-r8r.fullname" . }}-validating
+  labels:
+    {{- include "k8s-r8r.labels" . | nindent 4 }}
+  {{- if .Values.webhook.certManager.enabled }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "k8s-r8r.fullname" . }}-serving-cert
+  {{- end }}
+webhooks:
+  - name: vreplicationrequest.r8r.io
+    admissionReviewVersions:
+      - v1
+    # sideEffects None: the handler only reads ReplicationPolicies and
+    # returns a verdict; it never mutates state.
+    sideEffects: None
+    # failurePolicy Ignore is MANDATORY (admission-validation spec): this
+    # webhook is advisory UX only. If it is unavailable, writes must
+    # proceed — the controller re-evaluates ReplicationPolicy
+    # authoritatively on every reconcile, so a bypassed webhook can never
+    # cause unauthorized replication, only later feedback via Replication
+    # status and events. Never set this to Fail: that would make operator
+    # downtime block all annotated Secret/ConfigMap writes cluster-wide.
+    # Deliberately NOT a chart value.
+    failurePolicy: Ignore
+    # Small timeout for the same reason: feedback is nice-to-have; user
+    # writes must not wait on a slow webhook.
+    timeoutSeconds: 2
+    matchPolicy: Equivalent
+    clientConfig:
+      {{- with .Values.webhook.caBundle }}
+      caBundle: {{ . }}
+      {{- end }}
+      service:
+        name: {{ include "k8s-r8r.webhookServiceName" . }}
+        namespace: {{ .Release.Namespace }}
+        # Must match internal/webhook.Path.
+        path: /validate-replication-request
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["secrets", "configmaps"]
+        scope: Namespaced
+    # Only objects that opted into k8s-r8r reach the webhook: ordinary
+    # Secret/ConfigMap traffic never incurs an admission call. On UPDATE
+    # `object` is the incoming state, so removing all r8r.io annotations
+    # also bypasses the webhook — cleanup is always admitted.
+    # matchConditions are GA since Kubernetes 1.30 (minimum supported
+    # version).
+    matchConditions:
+      - name: has-r8r-annotation
+        expression: >-
+          has(object.metadata.annotations) &&
+          object.metadata.annotations.exists(k, k.startsWith('r8r.io/'))
+{{- if .Values.webhook.certManager.enabled }}
+---
+# Self-signed issuer for the webhook serving certificate. Suitable because
+# the webhook is advisory (failurePolicy Ignore): only the API server
+# verifies this certificate, via the CA bundle cert-manager injects.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "k8s-r8r.fullname" . }}-selfsigned
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "k8s-r8r.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "k8s-r8r.fullname" . }}-serving-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "k8s-r8r.labels" . | nindent 4 }}
+spec:
+  dnsNames:
+    - {{ include "k8s-r8r.webhookServiceName" . }}.{{ .Release.Namespace }}.svc
+    - {{ include "k8s-r8r.webhookServiceName" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ include "k8s-r8r.fullname" . }}-selfsigned
+  secretName: {{ include "k8s-r8r.webhookCertSecret" . }}
+{{- end }}
+{{- end }}

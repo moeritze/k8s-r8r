@@ -1,0 +1,331 @@
+# NOTE: generated file — copied from config/crd/bases/r8r.io_replications.yaml.
+# Do not edit by hand; regenerate with `make manifests` and re-copy.
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: replications.r8r.io
+spec:
+  group: r8r.io
+  names:
+    kind: Replication
+    listKind: ReplicationList
+    plural: replications
+    singular: replication
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.summary.desiredTargets
+      name: Desired
+      type: integer
+    - jsonPath: .status.summary.failedTargets
+      name: Failed
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Replication is the canonical, operator-owned materialization of one
+          replication request (design D1). It lives in the source object's namespace,
+          carries the resolved fanout in its spec, and reports status plus replica
+          inventory. Users never author these directly — the annotation shim (and,
+          later, other origins) creates them; project RBAC grants users read-only
+          access.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec is the resolved desired replication state, written by
+              the operator.
+            properties:
+              origin:
+                description: |-
+                  Origin records which request kind materialized this Replication.
+                  Currently always "Annotation"; designed to admit future origins such as
+                  "ReplicationSet".
+                enum:
+                - Annotation
+                type: string
+              resolvedTargets:
+                description: |-
+                  ResolvedTargets is the full fanout the request resolved to: one entry
+                  per target cluster with the namespaces to replicate into. An empty list
+                  means the request currently selects no targets.
+                items:
+                  description: |-
+                    ResolvedTarget is one target cluster (with its namespaces) that the request
+                    resolved to at materialization time. Resolution happens on the hub against
+                    discovered cluster inventory; the engine consumes these entries verbatim.
+                  properties:
+                    clusterName:
+                      description: ClusterName is the discovered inventory name of
+                        the target cluster.
+                      minLength: 1
+                      type: string
+                    namespaces:
+                      description: |-
+                        Namespaces are the target namespaces on this cluster that should each
+                        receive a replica of the source.
+                      items:
+                        type: string
+                      minItems: 1
+                      type: array
+                    targetName:
+                      description: |-
+                        TargetName optionally overrides the replica's name on the target
+                        (`r8r.io/target-name`). When empty, replicas keep the source's name.
+                        Automatic renaming never occurs (design D7) — this field is the only
+                        rename mechanism, and it is always explicit and git-visible.
+                      type: string
+                  required:
+                  - clusterName
+                  - namespaces
+                  type: object
+                type: array
+              sourceRef:
+                description: SourceRef identifies the hub object being replicated.
+                properties:
+                  kind:
+                    description: |-
+                      Kind of the source object (e.g. "Secret", "ConfigMap"). Only kinds on
+                      the operator's allowlist are ever materialized.
+                    minLength: 1
+                    type: string
+                  name:
+                    description: Name of the source object on the hub cluster.
+                    minLength: 1
+                    type: string
+                  namespace:
+                    description: Namespace of the source object on the hub cluster.
+                    minLength: 1
+                    type: string
+                  uid:
+                    description: |-
+                      UID of the source object. Used to detect that the referenced object is
+                      still the same incarnation the request was resolved from.
+                    type: string
+                required:
+                - kind
+                - name
+                - namespace
+                - uid
+                type: object
+            required:
+            - origin
+            - sourceRef
+            type: object
+          status:
+            description: Status is the observed fanout state.
+            properties:
+              conditions:
+                description: |-
+                  Conditions holds the aggregate conditions. "Ready" summarizes the whole
+                  fanout; reasons include PolicyDenied, PolicyRevoked, NotAuthoritative,
+                  and Conflict.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              inventory:
+                description: |-
+                  Inventory records every replica the engine has created for this source.
+                  It drives garbage collection on source deletion, annotation removal,
+                  target deselection, and cluster deregistration.
+                items:
+                  description: |-
+                    InventoryEntry records one replica the engine has created. The inventory is
+                    the source of truth for garbage collection: no code path may lose track of a
+                    created replica (replication-engine spec).
+                  properties:
+                    clusterName:
+                      description: ClusterName is the cluster the replica lives on.
+                      type: string
+                    group:
+                      description: |-
+                        Group is the API group of the replicated object; empty for the core
+                        group (Secret, ConfigMap).
+                      type: string
+                    kind:
+                      description: Kind is the kind of the replicated object.
+                      type: string
+                    lastAppliedHash:
+                      description: |-
+                        LastAppliedHash is the source content hash ("sha256:<hex>") that was
+                        last written to this replica. Compared against watch events to detect
+                        drift without caching replica payloads on the hub.
+                      type: string
+                    name:
+                      description: |-
+                        Name is the replica's name (source name or the explicit targetName
+                        override).
+                      type: string
+                    namespace:
+                      description: Namespace is the replica's namespace on that cluster.
+                      type: string
+                  required:
+                  - clusterName
+                  - kind
+                  - name
+                  - namespace
+                  type: object
+                type: array
+              nonReadyOverflow:
+                description: |-
+                  NonReadyOverflow is the number of non-ready targets beyond the
+                  NonReadyTargets cap that are not individually listed.
+                format: int32
+                type: integer
+              nonReadyTargets:
+                description: |-
+                  NonReadyTargets lists detail entries for targets that are currently not
+                  ready, capped at 20 entries. When the cap is exceeded, NonReadyOverflow
+                  counts the entries that did not fit. Healthy targets never appear here.
+                items:
+                  description: |-
+                    NonReadyTarget is the per-target detail entry recorded only while a target
+                    is not ready. The list is capped (see ReplicationStatus.NonReadyTargets);
+                    full per-target truth lives in metrics and events (design D8).
+                  properties:
+                    clusterName:
+                      description: ClusterName is the target cluster this entry describes.
+                      type: string
+                    lastTransitionTime:
+                      description: LastTransitionTime is when this target last changed
+                        readiness state.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message is a human-readable explanation of why
+                        the target is not ready.
+                      type: string
+                    name:
+                      description: Name is the intended replica name in that namespace.
+                      type: string
+                    namespace:
+                      description: Namespace is the target namespace on that cluster.
+                      type: string
+                    reason:
+                      description: |-
+                        Reason is a machine-readable CamelCase reason (e.g. Conflict,
+                        PolicyDenied, NamespaceMissing, ClusterUnreachable).
+                      type: string
+                  required:
+                  - clusterName
+                  - name
+                  - namespace
+                  - reason
+                  type: object
+                maxItems: 20
+                type: array
+              sourceHash:
+                description: |-
+                  SourceHash is the hash of the source payload the operator last observed,
+                  in the form "sha256:<hex>". Replicas carrying a different
+                  `r8r.io/source-hash` are considered drifted.
+                type: string
+              summary:
+                description: Summary holds the aggregate desired/ready/failed target
+                  counts.
+                properties:
+                  desiredTargets:
+                    description: |-
+                      DesiredTargets is the total number of (cluster, namespace) replica slots
+                      the spec currently resolves to.
+                    format: int32
+                    type: integer
+                  failedTargets:
+                    description: |-
+                      FailedTargets is the number of replica slots in a failing state
+                      (conflict, denied namespace, unreachable cluster, write error, ...).
+                    format: int32
+                    type: integer
+                  readyTargets:
+                    description: |-
+                      ReadyTargets is the number of replica slots whose replica exists and
+                      matches the current source hash.
+                    format: int32
+                    type: integer
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
