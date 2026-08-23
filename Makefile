@@ -257,3 +257,13 @@ fleet-down: ## Delete all local kind fleet clusters.
 .PHONY: fleet-kubeconfigs
 fleet-kubeconfigs: ## Export per-cluster kubeconfigs to ./bin/kubeconfigs/.
 	hack/kind-fleet.sh kubeconfigs
+
+##@ Git Hooks & Docs Sync
+
+.PHONY: install-hooks
+install-hooks: ## Install git hooks: pre-push gitleaks scan, post-commit graphify rebuild.
+	bash hack/install-git-hooks.sh
+
+.PHONY: secret-scan
+secret-scan: ## Scan the full git history for leaked secrets with gitleaks.
+	gitleaks git --no-banner --redact .

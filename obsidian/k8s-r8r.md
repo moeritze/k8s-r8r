@@ -1,23 +1,32 @@
-- the application stands for kubernetes-replicator
-- "declarative fanout of k8s objects (mainly for secrets, that is my use case) across a kubernetes fleet, with pluggable cluster discovery"
-- the idea is to build an open source software tool, which can replicate k8s objects across the cluster
-	- here we should brainstorm and research what is useful and secure in terms of rbac
-	- also how we could build conditioning and restrictions
-	- annotations on k8s manifests make target decisions for the replications
-	- a rule set or map should decide if thats allowed or not
-	- focus on working really good with gitops argocd
-	- this should also work cross cluster with clusterapi first, as clusters can be registered as clusterapi k8s objects, with dedicated annotations here
-		- later on also with rancher/fleet/aks,eks,gke and whatever multi cluster approach might fit
-- the application should be build in Go
-- thoughts
-	- replicas should be tracked, so they are not orphaned
-	- workqueue
-	- well documented
-	- work with openspec and claude
-	- ensuring a ns exists
-	- test & CI
-	- controller runtime
-	- CRDs as primary API
-	- leader election
-	- metrics/events
-	- 
+---
+tags: [hub]
+aliases: [kubernetes-replicator, home]
+---
+
+# k8s-r8r
+
+Declarative fanout of Kubernetes objects (Secrets, ConfigMaps) across a fleet — annotation-driven, policy-gated, with pluggable cluster discovery (ClusterAPI first). Built in Go on controller-runtime. Public repo: [github.com/moeritze/k8s-r8r](https://github.com/moeritze/k8s-r8r).
+
+> One annotation on a Secret + one admin policy = replicas on every selected cluster, tracked, drift-repaired, garbage-collected.
+
+## Functionality
+
+- [[replication-flow]] — the core path: annotation → `Replication` object → engine → replicas on spokes
+- [[policy-model]] — default-deny `ReplicationPolicy` gating: who may replicate what, where
+- [[cluster-discovery]] — how the fleet is discovered (ClusterAPI) and spoke credentials are bootstrapped
+- [[drift-detection]] — how replicas stay in sync without the hub caching secret data
+- [[security-model]] — threat model, RBAC personas, advisory webhook doctrine
+- [[operations]] — metrics, events, HA, status size discipline
+- [[architecture]] — component map and design decisions D1–D10
+- [[development]] — repo layout, testing (envtest + kind e2e), tooling workflow
+
+## Deep reference
+
+- `graph/` — auto-generated knowledge graph of the whole codebase (open `graph/graph.canvas`, regenerate per [[development]])
+- `../docs/` — user-facing docs (quickstart, annotations, policies, gitops, security, uninstall)
+- `../openspec/` — requirement specs + change history (source of truth for behavior)
+- [[history/original-brainstorm]] — where this started
+
+## Status
+
+v0 alpha (2026-08). Bootstrap change `bootstrap-k8s-r8r-operator`: 36/36 tasks, unit+envtest 207 tests, e2e green on kind fleet. Post-v1 topics: licensing model, contribution setup, distribution.

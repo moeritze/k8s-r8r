@@ -1,0 +1,23 @@
+- the application stands for kubernetes-replicator
+- "declarative fanout of k8s objects (mainly for secrets, that is my use case) across a kubernetes fleet, with pluggable cluster discovery"
+- the idea is to build an open source software tool, which can replicate k8s objects across the cluster
+	- here we should brainstorm and research what is useful and secure in terms of rbac
+	- also how we could build conditioning and restrictions
+	- annotations on k8s manifests make target decisions for the replications
+	- a rule set or map should decide if thats allowed or not
+	- focus on working really good with gitops argocd
+	- this should also work cross cluster with clusterapi first, as clusters can be registered as clusterapi k8s objects, with dedicated annotations here
+		- later on also with rancher/fleet/aks,eks,gke and whatever multi cluster approach might fit
+- the application should be build in Go
+- thoughts
+	- replicas should be tracked, so they are not orphaned
+	- workqueue
+	- well documented
+	- work with openspec and claude
+	- ensuring a ns exists
+	- test & CI
+	- controller runtime
+	- CRDs as primary API
+	- leader election
+	- metrics/events
+	- 
