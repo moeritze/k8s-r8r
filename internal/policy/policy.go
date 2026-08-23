@@ -51,7 +51,7 @@ package policy
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -214,7 +214,7 @@ func decide(src Source, tgt Target, policies []r8rv1alpha1.ReplicationPolicy) De
 	}
 
 	if len(matched) > 0 {
-		sort.Strings(matched)
+		slices.Sort(matched)
 		return Decision{
 			Target:          tgt,
 			Allowed:         true,
@@ -284,12 +284,7 @@ func selectorMatches(sel *metav1.LabelSelector, lbls map[string]string) bool {
 }
 
 func containsString(list []string, v string) bool {
-	for _, item := range list {
-		if item == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, v)
 }
 
 func policyList(names []string) string {

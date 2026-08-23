@@ -124,24 +124,24 @@ func TestReplicaAggregation(t *testing.T) {
 	ObserveReplicas("ns/a", map[string]ReplicaCounts{"agg-spoke": {Desired: 2, Ready: 2}})
 	ObserveReplicas("ns/b", map[string]ReplicaCounts{"agg-spoke": {Desired: 1, Failed: 1}})
 
-	if got := replicaValue(t, "k8s_r8r_replicas_desired", "agg-spoke"); got != 3 {
+	if got := replicaValue(t, "k8s_r8r_replicas_desired"); got != 3 {
 		t.Errorf("desired = %v, want 3", got)
 	}
-	if got := replicaValue(t, "k8s_r8r_replicas_ready", "agg-spoke"); got != 2 {
+	if got := replicaValue(t, "k8s_r8r_replicas_ready"); got != 2 {
 		t.Errorf("ready = %v, want 2", got)
 	}
-	if got := replicaValue(t, "k8s_r8r_replicas_failed", "agg-spoke"); got != 1 {
+	if got := replicaValue(t, "k8s_r8r_replicas_failed"); got != 1 {
 		t.Errorf("failed = %v, want 1", got)
 	}
 
 	ForgetReplicas("ns/b")
-	if got := replicaValue(t, "k8s_r8r_replicas_failed", "agg-spoke"); got != 0 {
+	if got := replicaValue(t, "k8s_r8r_replicas_failed"); got != 0 {
 		t.Errorf("failed after forget = %v, want 0", got)
 	}
 	ForgetReplicas("ns/a")
 }
 
-func replicaValue(t *testing.T, family, cluster string) float64 {
+func replicaValue(t *testing.T, family string) float64 {
 	t.Helper()
 	mf, ok := gatherOurs(t)[family]
 	if !ok {
@@ -149,7 +149,7 @@ func replicaValue(t *testing.T, family, cluster string) float64 {
 	}
 	for _, m := range mf.GetMetric() {
 		for _, lp := range m.GetLabel() {
-			if lp.GetName() == "cluster" && lp.GetValue() == cluster {
+			if lp.GetName() == "cluster" && lp.GetValue() == "agg-spoke" {
 				return m.GetGauge().GetValue()
 			}
 		}

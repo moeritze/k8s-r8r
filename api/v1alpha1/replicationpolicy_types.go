@@ -175,5 +175,5 @@ type ReplicationPolicyList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&ReplicationPolicy{}, &ReplicationPolicyList{})
+	objectTypes = append(objectTypes, &ReplicationPolicy{}, &ReplicationPolicyList{})
 }

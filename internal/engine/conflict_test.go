@@ -46,12 +46,12 @@ func TestEffectiveConflictPolicy(t *testing.T) {
 
 // unmanagedObject builds an existing spoke object without k8s-r8r marks.
 func unmanagedObject(payload string) *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]interface{}{
+	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
-		"metadata":   map[string]interface{}{"name": "web-creds", "namespace": "app"},
+		"metadata":   map[string]any{"name": "web-creds", "namespace": "app"},
 		"type":       "Opaque",
-		"data":       map[string]interface{}{"password": payload},
+		"data":       map[string]any{"password": payload},
 	}}
 }
 

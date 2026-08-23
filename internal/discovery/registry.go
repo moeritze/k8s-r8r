@@ -2,7 +2,7 @@ package discovery
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"sync"
 
 	"k8s.io/client-go/rest"
@@ -85,7 +85,7 @@ func (r *Registry) Names() []string {
 	for n := range r.factories {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	slices.Sort(names)
 	return names
 }
 

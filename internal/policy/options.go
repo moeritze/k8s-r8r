@@ -17,7 +17,8 @@ limitations under the License.
 package policy
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 
 	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
 )
@@ -88,9 +89,8 @@ func ResolveOptions(matched []r8rv1alpha1.ReplicationPolicy) EffectiveOptions {
 			eff.RevocationPolicy = r8rv1alpha1.RevocationPolicyRetain
 		}
 	}
-	sort.Slice(eff.AllowedConflictPolicies, func(a, b int) bool {
-		return conflictPolicyRank[eff.AllowedConflictPolicies[a]] <
-			conflictPolicyRank[eff.AllowedConflictPolicies[b]]
+	slices.SortFunc(eff.AllowedConflictPolicies, func(a, b r8rv1alpha1.ConflictPolicy) int {
+		return cmp.Compare(conflictPolicyRank[a], conflictPolicyRank[b])
 	})
 	return eff
 }

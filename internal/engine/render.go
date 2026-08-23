@@ -204,11 +204,11 @@ func SourceHash(obj *unstructured.Unstructured) string {
 
 // canonicalPayload reduces an object to the content the hash covers (see
 // SourceHash).
-func canonicalPayload(obj *unstructured.Unstructured) map[string]interface{} {
+func canonicalPayload(obj *unstructured.Unstructured) map[string]any {
 	content := runtime.DeepCopyJSON(obj.Object)
 	delete(content, "status")
-	reduced := map[string]interface{}{}
-	if md, ok := content["metadata"].(map[string]interface{}); ok {
+	reduced := map[string]any{}
+	if md, ok := content["metadata"].(map[string]any); ok {
 		if l := cleanRawKeys(md["labels"]); len(l) > 0 {
 			reduced["labels"] = l
 		}
@@ -228,7 +228,7 @@ func canonicalPayload(obj *unstructured.Unstructured) map[string]interface{} {
 // in place.
 func stripServerManaged(obj *unstructured.Unstructured) {
 	delete(obj.Object, "status")
-	md, ok := obj.Object["metadata"].(map[string]interface{})
+	md, ok := obj.Object["metadata"].(map[string]any)
 	if !ok {
 		return
 	}
@@ -261,12 +261,12 @@ func cleanPipelineKeys(m map[string]string) map[string]string {
 
 // cleanRawKeys is cleanPipelineKeys over the raw unstructured representation
 // of a string map.
-func cleanRawKeys(raw interface{}) map[string]interface{} {
-	m, ok := raw.(map[string]interface{})
+func cleanRawKeys(raw any) map[string]any {
+	m, ok := raw.(map[string]any)
 	if !ok {
 		return nil
 	}
-	out := make(map[string]interface{}, len(m))
+	out := make(map[string]any, len(m))
 	for k, v := range m {
 		if !isPipelineKey(k) {
 			out[k] = v

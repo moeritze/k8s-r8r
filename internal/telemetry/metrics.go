@@ -37,6 +37,7 @@ limitations under the License.
 package telemetry
 
 import (
+	"maps"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -203,9 +204,7 @@ func ObserveReplicas(owner string, perCluster map[string]ReplicaCounts) {
 		return
 	}
 	cp := make(map[string]ReplicaCounts, len(perCluster))
-	for k, v := range perCluster {
-		cp[k] = v
-	}
+	maps.Copy(cp, perCluster)
 	replicas.byOwner[owner] = cp
 }
 

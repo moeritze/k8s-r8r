@@ -33,6 +33,7 @@ package webhook
 
 import (
 	"fmt"
+	"slices"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -227,10 +228,5 @@ func jointlySatisfiable(a, b labels.Selector) bool {
 }
 
 func containsString(list []string, v string) bool {
-	for _, item := range list {
-		if item == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, v)
 }

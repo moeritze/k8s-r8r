@@ -26,10 +26,10 @@ import (
 // testSecret builds an unstructured Secret carrying every server-managed
 // field the pipeline must strip.
 func testSecret() *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]interface{}{
+	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
-		"metadata": map[string]interface{}{
+		"metadata": map[string]any{
 			"name":              "web-creds",
 			"namespace":         "app",
 			"uid":               "src-uid-1",
@@ -37,14 +37,14 @@ func testSecret() *unstructured.Unstructured {
 			"generation":        int64(3),
 			"creationTimestamp": "2026-01-01T00:00:00Z",
 			"selfLink":          "/api/v1/namespaces/app/secrets/web-creds",
-			"finalizers":        []interface{}{"r8r.io/finalizer"},
-			"managedFields":     []interface{}{map[string]interface{}{"manager": "kubectl"}},
-			"ownerReferences":   []interface{}{map[string]interface{}{"name": "owner"}},
-			"labels": map[string]interface{}{
+			"finalizers":        []any{"r8r.io/finalizer"},
+			"managedFields":     []any{map[string]any{"manager": "kubectl"}},
+			"ownerReferences":   []any{map[string]any{"name": "owner"}},
+			"labels": map[string]any{
 				"team":            "web",
 				"r8r.io/internal": "x",
 			},
-			"annotations": map[string]interface{}{
+			"annotations": map[string]any{
 				"r8r.io/replicate":                                 "true",
 				"r8r.io/target-clusters":                           "env=prod",
 				"kubectl.kubernetes.io/last-applied-configuration": "{...}",
@@ -52,8 +52,8 @@ func testSecret() *unstructured.Unstructured {
 			},
 		},
 		"type":   "Opaque",
-		"data":   map[string]interface{}{"password": "c2VjcmV0"},
-		"status": map[string]interface{}{"phase": "irrelevant"},
+		"data":   map[string]any{"password": "c2VjcmV0"},
+		"status": map[string]any{"phase": "irrelevant"},
 	}}
 }
 
@@ -63,7 +63,7 @@ func TestRender_StripsServerManagedFields(t *testing.T) {
 	src := testSecret()
 	rep, _ := Renderer{}.Render(src, "target-ns", "")
 
-	md := rep.Object["metadata"].(map[string]interface{})
+	md := rep.Object["metadata"].(map[string]any)
 	for _, f := range serverManagedMetadataFields {
 		if _, present := md[f]; present {
 			t.Errorf("replica metadata still contains server-managed field %q", f)
@@ -78,7 +78,7 @@ func TestRender_StripsServerManagedFields(t *testing.T) {
 	if rep.GetName() != "web-creds" {
 		t.Errorf("replica name = %q, want source name", rep.GetName())
 	}
-	if got := rep.Object["data"].(map[string]interface{})["password"]; got != "c2VjcmV0" {
+	if got := rep.Object["data"].(map[string]any)["password"]; got != "c2VjcmV0" {
 		t.Errorf("replica payload changed: data.password = %v", got)
 	}
 }
@@ -135,12 +135,12 @@ func TestSourceHash_Deterministic(t *testing.T) {
 	if SourceHash(a) != SourceHash(b) {
 		t.Fatal("identical objects produced different hashes")
 	}
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		if SourceHash(a) != SourceHash(b) {
 			t.Fatal("hash not deterministic across invocations")
 		}
 	}
-	b.Object["data"].(map[string]interface{})["password"] = "b3RoZXI="
+	b.Object["data"].(map[string]any)["password"] = "b3RoZXI="
 	if SourceHash(a) == SourceHash(b) {
 		t.Fatal("payload change did not change the hash")
 	}

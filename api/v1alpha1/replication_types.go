@@ -285,5 +285,5 @@ type ReplicationList struct {
 }
 
 func init() {
-	SchemeBuilder.Register(&Replication{}, &ReplicationList{})
+	objectTypes = append(objectTypes, &Replication{}, &ReplicationList{})
 }

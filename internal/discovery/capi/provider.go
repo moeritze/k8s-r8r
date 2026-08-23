@@ -26,6 +26,7 @@ package capi
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -219,9 +220,7 @@ func emit(handlers []discovery.EventHandler, e discovery.Event) {
 // discovery record.
 func recordFromCluster(u *unstructured.Unstructured) discovery.ClusterRecord {
 	labels := map[string]string{}
-	for k, v := range u.GetLabels() {
-		labels[k] = v
-	}
+	maps.Copy(labels, u.GetLabels())
 	return discovery.ClusterRecord{
 		Name:   u.GetName(),
 		Labels: labels,

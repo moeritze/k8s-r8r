@@ -108,7 +108,7 @@ func startDetector(t *testing.T, d *DriftDetector) context.CancelFunc {
 	}
 }
 
-func managedReplicaMeta(uid, srcNS string) *metav1.PartialObjectMetadata {
+func managedReplicaMeta(uid string) *metav1.PartialObjectMetadata {
 	pom := &metav1.PartialObjectMetadata{}
 	pom.SetGroupVersionKind(secretGVK)
 	pom.SetName("web-creds")
@@ -116,7 +116,7 @@ func managedReplicaMeta(uid, srcNS string) *metav1.PartialObjectMetadata {
 	pom.SetLabels(map[string]string{
 		LabelManagedBy:       ManagedByValue,
 		LabelSourceUID:       uid,
-		LabelSourceNamespace: srcNS,
+		LabelSourceNamespace: "hub-ns",
 	})
 	return pom
 }
@@ -175,24 +175,24 @@ func TestDrift_HandlerEnqueuesOwningReplication(t *testing.T) {
 
 	// Update on a managed replica (covers payload-only edits: those still
 	// produce update events).
-	h.OnUpdate(nil, managedReplicaMeta("src-uid-1", "hub-ns"))
+	h.OnUpdate(nil, managedReplicaMeta("src-uid-1"))
 	expectEvent("update")
 
 	// Deletion, including the tombstone form.
-	h.OnDelete(managedReplicaMeta("src-uid-1", "hub-ns"))
+	h.OnDelete(managedReplicaMeta("src-uid-1"))
 	expectEvent("delete")
-	h.OnDelete(toolscache.DeletedFinalStateUnknown{Obj: managedReplicaMeta("src-uid-1", "hub-ns")})
+	h.OnDelete(toolscache.DeletedFinalStateUnknown{Obj: managedReplicaMeta("src-uid-1")})
 	expectEvent("tombstone delete")
 
 	// Add events (resync fallback path) enqueue too.
-	h.OnAdd(managedReplicaMeta("src-uid-1", "hub-ns"), false)
+	h.OnAdd(managedReplicaMeta("src-uid-1"), false)
 	expectEvent("add")
 
 	// Unmanaged objects and objects without source-ref labels are ignored.
-	unmanaged := managedReplicaMeta("src-uid-1", "hub-ns")
+	unmanaged := managedReplicaMeta("src-uid-1")
 	unmanaged.SetLabels(map[string]string{"app": "whatever"})
 	h.OnUpdate(nil, unmanaged)
-	incomplete := managedReplicaMeta("", "hub-ns")
+	incomplete := managedReplicaMeta("")
 	h.OnUpdate(nil, incomplete)
 	select {
 	case <-d.Events():

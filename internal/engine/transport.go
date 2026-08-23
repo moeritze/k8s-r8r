@@ -100,7 +100,8 @@ func (t *PushTransport) Apply(ctx context.Context, cluster string, obj *unstruct
 	if err != nil {
 		return err
 	}
-	return c.Patch(ctx, obj, client.Apply, client.FieldOwner(t.fieldManager()), client.ForceOwnership)
+	return c.Apply(ctx, client.ApplyConfigurationFromUnstructured(obj),
+		client.FieldOwner(t.fieldManager()), client.ForceOwnership)
 }
 
 // Get implements Transport with a live read.

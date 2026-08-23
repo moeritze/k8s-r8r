@@ -18,6 +18,7 @@ package engine
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"time"
 
@@ -99,9 +100,7 @@ func (d *DriftDetector) Start(ctx context.Context) error {
 	d.mu.Lock()
 	d.ctx = ctx
 	pending := make(map[string]cache.Cache, len(d.clusters))
-	for name, c := range d.clusters {
-		pending[name] = c
-	}
+	maps.Copy(pending, d.clusters)
 	d.mu.Unlock()
 	for name, c := range pending {
 		d.installAll(name, c)
@@ -224,14 +223,14 @@ type driftHandler struct {
 }
 
 // OnAdd implements cache.ResourceEventHandler.
-func (h *driftHandler) OnAdd(obj interface{}, _ bool) { h.observe(obj) }
+func (h *driftHandler) OnAdd(obj any, _ bool) { h.observe(obj) }
 
 // OnUpdate implements cache.ResourceEventHandler.
-func (h *driftHandler) OnUpdate(_, newObj interface{}) { h.observe(newObj) }
+func (h *driftHandler) OnUpdate(_, newObj any) { h.observe(newObj) }
 
 // OnDelete implements cache.ResourceEventHandler. Replica deletion must
 // always enqueue so the reconciler can recreate the replica.
-func (h *driftHandler) OnDelete(obj interface{}) {
+func (h *driftHandler) OnDelete(obj any) {
 	if tomb, ok := obj.(toolscache.DeletedFinalStateUnknown); ok {
 		obj = tomb.Obj
 	}
@@ -240,7 +239,7 @@ func (h *driftHandler) OnDelete(obj interface{}) {
 
 // observe filters for managed replicas and enqueues their owning
 // Replication(s), identified via the source-ref labels (design D7).
-func (h *driftHandler) observe(obj interface{}) {
+func (h *driftHandler) observe(obj any) {
 	mo, ok := obj.(metav1.Object)
 	if !ok {
 		return

@@ -12,7 +12,10 @@
 // in operator deployment configuration.
 package discovery
 
-import "context"
+import (
+	"context"
+	"maps"
+)
 
 // CredentialRef points at a kubeconfig-bearing Secret on the hub cluster that
 // holds the provider's admin credential for a target cluster. The credential
@@ -54,9 +57,7 @@ func (r ClusterRecord) Clone() ClusterRecord {
 	out := r
 	if r.Labels != nil {
 		out.Labels = make(map[string]string, len(r.Labels))
-		for k, v := range r.Labels {
-			out.Labels[k] = v
-		}
+		maps.Copy(out.Labels, r.Labels)
 	}
 	return out
 }

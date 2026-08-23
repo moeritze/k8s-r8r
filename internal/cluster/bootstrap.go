@@ -44,8 +44,12 @@ const (
 	managedByLabelValue = "k8s-r8r"
 )
 
+// verbCreate is the RBAC create verb, shared by the replica, namespace, and
+// token-mint rules.
+const verbCreate = "create"
+
 // replicaVerbs are the verbs granted on every replicated resource kind.
-var replicaVerbs = []string{"get", "list", "watch", "create", "update", "patch", "delete"}
+var replicaVerbs = []string{"get", "list", "watch", verbCreate, "update", "patch", "delete"}
 
 // ScopedResource identifies one resource kind the policy universe allows
 // replicating.
@@ -94,7 +98,7 @@ func (s RBACScope) Rules() []rbacv1.PolicyRule {
 	rules = append(rules, rbacv1.PolicyRule{
 		APIGroups: []string{""},
 		Resources: []string{"namespaces"},
-		Verbs:     []string{"get", "create", "patch"},
+		Verbs:     []string{"get", verbCreate, "patch"},
 	})
 	return rules
 }
@@ -216,7 +220,7 @@ func (b *Bootstrapper) ensureTokenRole(ctx context.Context) error {
 			APIGroups:     []string{""},
 			Resources:     []string{"serviceaccounts/token"},
 			ResourceNames: []string{ServiceAccountName},
-			Verbs:         []string{"create"},
+			Verbs:         []string{verbCreate},
 		}},
 	}
 	_, err := b.client.RbacV1().Roles(Namespace).Create(ctx, role, metav1.CreateOptions{})

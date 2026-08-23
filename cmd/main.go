@@ -50,6 +50,7 @@ import (
 	"github.com/moeritze/k8s-r8r/internal/cluster"
 	"github.com/moeritze/k8s-r8r/internal/controller/request"
 	"github.com/moeritze/k8s-r8r/internal/discovery"
+
 	// The ClusterAPI provider registers itself as "cluster-api" in the
 	// discovery registry via its init function.
 	_ "github.com/moeritze/k8s-r8r/internal/discovery/capi"
@@ -82,11 +83,13 @@ var supportedKinds = map[string]schema.GroupVersionKind{
 // per-component views of the kind allowlist: the request controller's GVK
 // allowlist, the engine's kind->GVK map, and the spoke RBAC scope used at
 // bootstrap.
-func parseAllowedKinds(raw string) ([]schema.GroupVersionKind, map[string]schema.GroupVersionKind, cluster.RBACScope, error) {
+func parseAllowedKinds(
+	raw string,
+) ([]schema.GroupVersionKind, map[string]schema.GroupVersionKind, cluster.RBACScope, error) {
 	var allowlist []schema.GroupVersionKind
 	kindGVKs := map[string]schema.GroupVersionKind{}
 	var scope cluster.RBACScope
-	for _, part := range strings.Split(raw, ",") {
+	for part := range strings.SplitSeq(raw, ",") {
 		name := strings.ToLower(strings.TrimSpace(part))
 		if name == "" {
 			continue
@@ -153,7 +156,9 @@ type spokeWirer struct {
 	spokes map[string]context.CancelFunc
 }
 
-func newSpokeWirer(ctx context.Context, hub client.Reader, clusters *cluster.Manager, scope cluster.RBACScope) *spokeWirer {
+func newSpokeWirer(
+	ctx context.Context, hub client.Reader, clusters *cluster.Manager, scope cluster.RBACScope,
+) *spokeWirer {
 	return &spokeWirer{
 		ctx:      ctx,
 		hub:      hub,
@@ -481,7 +486,7 @@ func main() {
 	engineReconciler := &engine.Reconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
-		Recorder:      mgr.GetEventRecorderFor("replication-engine"),
+		Recorder:      mgr.GetEventRecorder("replication-engine"),
 		Transport:     engine.NewPushTransport(clusterManager, "k8s-r8r"),
 		Clusters:      engine.ProviderInventory{Provider: provider},
 		ClusterEvents: clusterManager,

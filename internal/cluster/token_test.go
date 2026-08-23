@@ -19,7 +19,6 @@ func (c *fakeClock) Advance(d time.Duration) { c.t = c.t.Add(d) }
 // recordingMinter counts mints and records which credential was used.
 type recordingMinter struct {
 	clock  *fakeClock
-	ttl    time.Duration
 	mints  int
 	usedBy []string // "sa-token" or "bootstrap" per mint
 	err    error

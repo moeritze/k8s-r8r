@@ -75,7 +75,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"slices"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -181,7 +181,7 @@ func warningsFor(p *parsedRequest) []string {
 	}
 	var out []string
 	keys := append([]string(nil), p.unknownKeys...)
-	sort.Strings(keys)
+	slices.Sort(keys)
 	for _, k := range keys {
 		out = append(out, fmt.Sprintf("unknown annotation %q is ignored by k8s-r8r (known keys: %s, %s, %s, %s)",
 			k, annReplicate, annTargetClusters, annTargetNamespaces, annTargetName))

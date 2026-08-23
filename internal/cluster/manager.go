@@ -355,12 +355,10 @@ func (m *Manager) runtimeOf(name string) (Runtime, bool) {
 func (m *Manager) launch(parent context.Context, e *entry) {
 	ctx, cancel := context.WithCancel(parent)
 	e.cancel = cancel
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
+	m.wg.Go(func() {
 		defer close(e.done)
 		m.lifecycle(ctx, e)
-	}()
+	})
 }
 
 // lifecycle probes the cluster with backoff, starts the runtime once

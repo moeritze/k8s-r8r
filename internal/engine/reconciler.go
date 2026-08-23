@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -160,7 +160,7 @@ type Reconciler struct {
 	// Scheme is the hub scheme.
 	Scheme *runtime.Scheme
 	// Recorder emits events on Replication objects; nil disables events.
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 	// Transport moves replicas to and from target clusters.
 	Transport Transport
 	// Clusters resolves discovery inventory (labels + gone detection).
@@ -217,7 +217,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.Client.Get(ctx, req.NamespacedName, rep); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.backoff.Forget(req.NamespacedName)
-			telemetry.ForgetReplicas(req.NamespacedName.String())
+			telemetry.ForgetReplicas(req.String())
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -342,7 +342,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 		keep[SlotKey{Cluster: s.cluster, Namespace: s.namespace, Name: s.name, Group: gvk.Group, Kind: gvk.Kind}] = true
 		eff := policy.ResolveOptions(policiesByName(policyList.Items, dec.MatchedPolicies))
-		st, delay := r.applyTarget(ctx, nn, rep, src, srcHash, gvk, s, eff, &inv)
+		st, delay := r.applyTarget(ctx, nn, rep, src, gvk, s, eff, &inv)
 		states = append(states, st)
 		if delay > 0 {
 			delays = append(delays, delay)
@@ -538,7 +538,6 @@ func (r *Reconciler) applyTarget(
 	nn types.NamespacedName,
 	rep *r8rv1alpha1.Replication,
 	src *unstructured.Unstructured,
-	srcHash string,
 	gvk schema.GroupVersionKind,
 	s slotInfo,
 	eff policy.EffectiveOptions,
@@ -849,7 +848,7 @@ func (r *Reconciler) event(rep *r8rv1alpha1.Replication, eventType, reason, mess
 	if r.limiter != nil && !r.limiter.Allow(string(rep.UID), reason, message) {
 		return
 	}
-	r.Recorder.Event(rep, eventType, reason, message)
+	r.Recorder.Eventf(rep, nil, eventType, reason, "Reconcile", "%s", message)
 }
 
 // emitTransitionEvents turns Ready-condition transitions into lifecycle

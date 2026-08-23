@@ -29,6 +29,9 @@ linters:
       logcheck:
         type: "module"
         description: Checks Go logging calls for Kubernetes logging conventions.
+    goconst:
+      # Repeated literals in tests are fixture noise, not missing constants.
+      ignore-tests: true
     depguard:
       rules:
         forbid-sort-pkg:

@@ -24,6 +24,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,7 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -181,21 +182,19 @@ func (f *fakeTransport) Apply(_ context.Context, cluster string, obj *unstructur
 			merged.Object[field] = runtime.DeepCopyJSONValue(v)
 			continue
 		}
-		inMD, _ := v.(map[string]interface{})
-		exMD, _ := merged.Object["metadata"].(map[string]interface{})
+		inMD, _ := v.(map[string]any)
+		exMD, _ := merged.Object["metadata"].(map[string]any)
 		if exMD == nil {
-			exMD = map[string]interface{}{}
+			exMD = map[string]any{}
 			merged.Object["metadata"] = exMD
 		}
 		for mk, mv := range inMD {
 			if mk == "labels" || mk == "annotations" {
-				exMap, _ := exMD[mk].(map[string]interface{})
+				exMap, _ := exMD[mk].(map[string]any)
 				if exMap == nil {
-					exMap = map[string]interface{}{}
+					exMap = map[string]any{}
 				}
-				for lk, lv := range mv.(map[string]interface{}) {
-					exMap[lk] = lv
-				}
+				maps.Copy(exMap, mv.(map[string]any))
 				exMD[mk] = exMap
 				continue
 			}
@@ -321,7 +320,7 @@ type testFixture struct {
 	ns        string
 	transport *fakeTransport
 	clusters  *stubClusters
-	recorder  *record.FakeRecorder
+	recorder  *events.FakeRecorder
 	rec       *Reconciler
 	secret    *corev1.Secret
 	rep       *r8rv1alpha1.Replication
@@ -336,7 +335,7 @@ func newFixture(t *testing.T, secretValue string, targets []r8rv1alpha1.Resolved
 		t:         t,
 		transport: newFakeTransport(),
 		clusters:  newStubClusters(clusterNames...),
-		recorder:  record.NewFakeRecorder(200),
+		recorder:  events.NewFakeRecorder(200),
 	}
 
 	f.ns = uniqueName("eng-test")
@@ -484,8 +483,8 @@ func (f *testFixture) drainEvents() []string {
 }
 
 // eventsContaining reports whether any drained event contains the substring.
-func eventsContaining(events []string, substr string) bool {
-	for _, e := range events {
+func eventsContaining(evs []string, substr string) bool {
+	for _, e := range evs {
 		if strings.Contains(e, substr) {
 			return true
 		}
