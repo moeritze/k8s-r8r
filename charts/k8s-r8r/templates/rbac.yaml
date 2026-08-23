@@ -27,6 +27,16 @@ rules:
   verbs:
   - create
   - patch
+# The operator records events through the events.k8s.io/v1 API
+# (manager.GetEventRecorder), so the new API group needs create/patch too;
+# without it every event is silently dropped with a 403.
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 - apiGroups:
   - ""
   resources:

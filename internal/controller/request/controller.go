@@ -205,6 +205,7 @@ type Reconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets;configmaps,verbs=get;list;watch;patch;update
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // SetupWithManager registers all controllers of the annotation shim with the
 // manager: one per watched source kind (metadata-only) and one for Replication
