@@ -64,7 +64,7 @@ func hasEventsV1Rule(doc string) bool {
 			strings.Contains(joined, "- create") &&
 			strings.Contains(joined, "- patch")
 	}
-	for _, line := range strings.Split(doc, "\n") {
+	for line := range strings.SplitSeq(doc, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "- apiGroups:") {
 			if len(block) > 0 && check() {
 				return true
