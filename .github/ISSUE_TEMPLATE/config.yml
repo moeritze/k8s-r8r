@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/moeritze/k8s-r8r/blob/main/SECURITY.md
+    about: Do NOT open a public issue for vulnerabilities — use GitHub private vulnerability reporting as described in SECURITY.md.
+  - name: Questions & discussion
+    url: https://github.com/moeritze/k8s-r8r/discussions
+    about: Ask questions, share ideas, or discuss usage in GitHub Discussions.

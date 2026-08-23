@@ -1,0 +1,77 @@
+name: Bug report
+description: Something is broken in k8s-r8r
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug!
+
+        **Security vulnerabilities**: do NOT report them here — see [SECURITY.md](https://github.com/moeritze/k8s-r8r/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: k8s-r8r version / commit
+      description: Release tag or git commit SHA of the operator you are running.
+      placeholder: v0.3.0 / 1a2b3c4
+    validations:
+      required: true
+  - type: input
+    id: hub-k8s-version
+    attributes:
+      label: Hub Kubernetes version
+      placeholder: v1.31.2 (kind / EKS / ...)
+    validations:
+      required: true
+  - type: input
+    id: spoke-k8s-versions
+    attributes:
+      label: Spoke Kubernetes version(s)
+      description: Versions of the spoke clusters involved (comma-separated if mixed).
+      placeholder: v1.30.4, v1.31.2
+    validations:
+      required: false
+  - type: input
+    id: discovery-provider
+    attributes:
+      label: Discovery provider
+      description: How your spoke clusters are discovered.
+      placeholder: static / kubeconfig-secrets / ...
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What actually happened, and what did you expect instead?
+      placeholder: |
+        What happened:
+        ...
+
+        What I expected:
+        ...
+    validations:
+      required: true
+  - type: textarea
+    id: status-and-events
+    attributes:
+      label: Relevant Replication status and events
+      description: |
+        Output of `kubectl get replication <name> -o yaml` (status section) and `kubectl describe` events for the affected objects.
+
+        **NEVER paste secret data.** Redact anything sensitive — this is a public repo. k8s-r8r itself never logs payload data (hashes only), but double-check anything you copy from your cluster before posting.
+      render: yaml
+    validations:
+      required: false
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps to reproduce the behavior. Manifests with obviously-fake placeholder data are very helpful.
+      placeholder: |
+        1. Create a ReplicationPolicy that ...
+        2. Annotate the Secret with ...
+        3. Observe ...
+    validations:
+      required: true
