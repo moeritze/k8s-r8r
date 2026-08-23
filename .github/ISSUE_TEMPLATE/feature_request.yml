@@ -1,0 +1,43 @@
+name: Feature request
+description: Suggest an idea or improvement for k8s-r8r
+title: "[feat]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Note that behavior changes go through [OpenSpec](https://github.com/moeritze/k8s-r8r/blob/main/CONTRIBUTING.md#workflow) — a maintainer will help turn an accepted request into a spec change.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem are you trying to solve? What is currently not possible or painful?
+      placeholder: I want to replicate ... but ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: How would you like it to work? API/annotation/policy sketches welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches or workarounds you have considered or tried.
+    validations:
+      required: false
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Willingness to contribute
+      description: Would you be willing to implement this (with guidance)?
+      options:
+        - Yes, I can implement it
+        - Yes, with some guidance
+        - No, but I can test it
+        - "No"
+    validations:
+      required: true
