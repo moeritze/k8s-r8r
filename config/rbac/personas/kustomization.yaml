@@ -1,0 +1,8 @@
+# Persona ClusterRoles for k8s-r8r consumers (not the operator itself):
+# - k8s-r8r-policy-admin: full CRUD on ReplicationPolicy (cluster admins only)
+# - k8s-r8r-replication-viewer: read-only Replication access, aggregated to view
+# Intentionally NOT included in the default overlay; apply or reference
+# explicitly when packaging (e.g. from the Helm chart).
+resources:
+- policy_admin_role.yaml
+- replication_viewer_role.yaml

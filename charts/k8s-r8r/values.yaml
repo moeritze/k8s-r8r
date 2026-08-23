@@ -1,0 +1,122 @@
+# Default values for the k8s-r8r operator chart.
+#
+# All defaults produce a working installation on a hub cluster that has
+# cert-manager installed (used for the advisory webhook's serving
+# certificate). Without cert-manager, set:
+#
+#   webhook.certManager.enabled=false
+#   webhook.certSecretName=<your TLS secret>   # tls.crt / tls.key
+#   webhook.caBundle=<base64 CA>               # optional but recommended
+#
+# or disable the webhook entirely (webhook.enabled=false) — it is advisory
+# UX only; the controller enforces policy authoritatively either way.
+
+image:
+  repository: ghcr.io/moeritze/k8s-r8r
+  # Defaults to the chart appVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Leader election is always enabled by this chart, so replicaCount > 1 is
+# safe: exactly one replica reconciles at a time, the others are hot
+# standbys.
+replicaCount: 1
+
+# -- Operator configuration (maps 1:1 to manager flags) --
+
+# Cluster discovery provider (--discovery-provider). Registered providers:
+# cluster-api.
+discoveryProvider: cluster-api
+
+# Source-cluster identity stamped onto replicas as the
+# r8r.io/source-cluster label (--hub-name).
+hubName: hub
+
+# Resource names enabled for replication (--allowed-kinds).
+# Supported: secrets, configmaps.
+allowedKinds:
+  - secrets
+  - configmaps
+
+# Drift resync interval for spoke informers and periodic reconciles
+# (--spoke-resync), as a Go duration, e.g. "1h". Empty uses the engine
+# default of 10h.
+spokeResync: ""
+
+# Additional raw arguments appended to the manager command line.
+extraArgs: []
+
+serviceAccount:
+  create: true
+  # Defaults to the chart fullname when empty.
+  name: ""
+  annotations: {}
+
+rbac:
+  # Operator ClusterRole/Role and bindings.
+  create: true
+  personas:
+    # Persona ClusterRoles for humans (not the operator):
+    #   k8s-r8r-policy-admin        — full CRUD on ReplicationPolicy
+    #                                 (bind to cluster admins only).
+    #   k8s-r8r-replication-viewer  — read-only Replication access,
+    #                                 aggregated into the built-in "view"
+    #                                 ClusterRole.
+    # The chart creates the roles but never binds policy-admin; bind it
+    # deliberately.
+    enabled: true
+
+metrics:
+  # Expose the controller-runtime metrics endpoint.
+  enabled: true
+  # Serve metrics over HTTPS with authn/authz (kube-rbac style filters).
+  # Scrapers need a token authorized against the metrics-auth ClusterRole
+  # (nonResourceURL /metrics is covered by the metrics-reader ClusterRole).
+  secure: true
+  port: 8443
+  service:
+    # Create a Service in front of the metrics port.
+    enabled: true
+
+webhook:
+  # Advisory validating webhook (apply-time feedback on denied requests).
+  # Deployed with failurePolicy Ignore — never an availability or security
+  # dependency; safe to disable.
+  enabled: true
+  port: 9443
+  certManager:
+    # Let cert-manager issue the webhook serving certificate (self-signed
+    # Issuer + Certificate) and inject the CA into the webhook
+    # configuration. Requires cert-manager to be installed.
+    enabled: true
+  # Manual-cert fallback (used when certManager.enabled=false):
+  # name of an existing TLS Secret (keys tls.crt / tls.key) in the release
+  # namespace, mounted as the webhook serving certificate. Empty defaults
+  # to "<fullname>-webhook-server-cert" (the same Secret cert-manager
+  # writes when enabled).
+  certSecretName: ""
+  # Base64-encoded CA bundle for the ValidatingWebhookConfiguration when
+  # cert-manager injection is disabled. If left empty the API server cannot
+  # verify the webhook and skips it — harmless (failurePolicy Ignore), but
+  # you lose the apply-time feedback.
+  caBundle: ""
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+nodeSelector: {}
+tolerations: []
+affinity: {}

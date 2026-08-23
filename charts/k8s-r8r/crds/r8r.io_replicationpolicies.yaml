@@ -1,0 +1,235 @@
+# NOTE: generated file — copied from config/crd/bases/r8r.io_replicationpolicies.yaml.
+# Do not edit by hand; regenerate with `make manifests` and re-copy.
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: replicationpolicies.r8r.io
+spec:
+  group: r8r.io
+  names:
+    kind: ReplicationPolicy
+    listKind: ReplicationPolicyList
+    plural: replicationpolicies
+    singular: replicationpolicy
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ReplicationPolicy is the admin-controlled security boundary: a cluster-scoped
+          allowlist that permits replication requests. With no policies present nothing
+          replicates (default deny); multiple policies combine by union. Policy is
+          re-evaluated authoritatively on every reconcile — admission-time checks are
+          advisory only (design D4/D6). Project RBAC restricts writes to cluster
+          administrators.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: Spec defines the allowlists and options of this policy.
+            properties:
+              options:
+                default: {}
+                description: |-
+                  Options gates engine side effects for requests this policy permits.
+                  Omitted options take the safe defaults (no namespace creation, conflicts
+                  Fail, revocation Delete).
+                properties:
+                  allowNamespaceCreation:
+                    default: false
+                    description: |-
+                      AllowNamespaceCreation permits the engine to create missing target
+                      namespaces (labeled `app.kubernetes.io/managed-by: k8s-r8r`). Defaults
+                      to false: replication into a nonexistent namespace fails with a
+                      condition instead of silently creating cluster-level structure.
+                    type: boolean
+                  allowedConflictPolicies:
+                    default:
+                    - Fail
+                    description: |-
+                      AllowedConflictPolicies lists the conflict policies requests under this
+                      policy may use. Defaults to [Fail]: Overwrite and Adopt must be
+                      explicitly granted because they touch objects k8s-r8r does not manage.
+                    items:
+                      description: |-
+                        ConflictPolicy describes how the engine treats a pre-existing, unmanaged
+                        object occupying an intended replica's name on a target (design D7).
+                      enum:
+                      - Fail
+                      - Overwrite
+                      - Adopt
+                      type: string
+                    type: array
+                  revocationPolicy:
+                    default: Delete
+                    description: |-
+                      RevocationPolicy controls what happens to already-created replicas when
+                      this policy stops permitting them. Defaults to Delete.
+                    enum:
+                    - Retain
+                    - Delete
+                    type: string
+                type: object
+              sources:
+                description: Sources allowlists which hub objects may request replication.
+                properties:
+                  kinds:
+                    description: |-
+                      Kinds allowlists source kinds (e.g. "Secret", "ConfigMap"). A request's
+                      kind must appear here; kinds outside the operator's global allowlist are
+                      never replicated regardless of policy.
+                    items:
+                      type: string
+                    minItems: 1
+                    type: array
+                  namespaceSelector:
+                    description: |-
+                      NamespaceSelector allowlists source namespaces by their labels. Nil
+                      means no selector-based matching (only the exact Namespaces list
+                      applies); an empty selector matches every namespace.
+                    properties:
+                      matchExpressions:
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                          map is equivalent to an element of matchExpressions, whose key field is "key", the
+                          operator is "In", and the values array contains only "value". The requirements are ANDed.
+                        type: object
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  namespaces:
+                    description: |-
+                      Namespaces allowlists source namespaces by exact name. A source
+                      namespace matches the namespace dimension if it appears here or matches
+                      NamespaceSelector.
+                    items:
+                      type: string
+                    type: array
+                required:
+                - kinds
+                type: object
+              targets:
+                description: |-
+                  Targets allowlists which clusters and namespaces those sources may
+                  replicate into.
+                properties:
+                  clusterSelector:
+                    description: |-
+                      ClusterSelector allowlists target clusters by labels on discovered
+                      cluster inventory. An empty selector matches all discovered clusters.
+                    properties:
+                      matchExpressions:
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                          map is equivalent to an element of matchExpressions, whose key field is "key", the
+                          operator is "In", and the values array contains only "value". The requirements are ANDed.
+                        type: object
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  namespaces:
+                    description: |-
+                      Namespaces allowlists target namespaces by exact name on the selected
+                      clusters.
+                    items:
+                      type: string
+                    minItems: 1
+                    type: array
+                required:
+                - clusterSelector
+                - namespaces
+                type: object
+            required:
+            - sources
+            - targets
+            type: object
+        type: object
+    served: true
+    storage: true

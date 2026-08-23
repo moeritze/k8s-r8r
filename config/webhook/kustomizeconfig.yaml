@@ -1,0 +1,22 @@
+# Teaches kustomize how to substitute name and namespace references into the
+# webhook configuration's clientConfig.
+nameReference:
+  - kind: Service
+    version: v1
+    fieldSpecs:
+      - kind: MutatingWebhookConfiguration
+        group: admissionregistration.k8s.io
+        path: webhooks/clientConfig/service/name
+      - kind: ValidatingWebhookConfiguration
+        group: admissionregistration.k8s.io
+        path: webhooks/clientConfig/service/name
+
+namespace:
+  - kind: MutatingWebhookConfiguration
+    group: admissionregistration.k8s.io
+    path: webhooks/clientConfig/service/namespace
+    create: true
+  - kind: ValidatingWebhookConfiguration
+    group: admissionregistration.k8s.io
+    path: webhooks/clientConfig/service/namespace
+    create: true

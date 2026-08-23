@@ -1,0 +1,26 @@
+# Persona: policy administrator.
+# Grants full CRUD on ReplicationPolicy objects. Policies are the security
+# boundary of k8s-r8r (default deny, allowlist-only), so bind this role only
+# to cluster administrators. Not wired into the default overlay on purpose —
+# operators bind it deliberately.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-r8r-policy-admin
+  labels:
+    app.kubernetes.io/name: k8s-r8r
+    app.kubernetes.io/managed-by: kustomize
+rules:
+- apiGroups:
+  - r8r.io
+  resources:
+  - replicationpolicies
+  verbs:
+  - create
+  - delete
+  - deletecollection
+  - get
+  - list
+  - patch
+  - update
+  - watch
