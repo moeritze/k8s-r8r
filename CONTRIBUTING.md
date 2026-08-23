@@ -26,6 +26,16 @@ Toolchain: Go (see `go.mod`), docker, kind, helm, gitleaks. `hack/kind-fleet.sh`
 - **Secret-safe telemetry**: no payload data in logs/events/conditions/metrics — hashes only. An AST audit test enforces this.
 - The admission webhook stays `failurePolicy: Ignore`; policy enforcement stays reconcile-time authoritative (see `docs/security.md`).
 
+## Developer Certificate of Origin (DCO)
+
+This project uses the [Developer Certificate of Origin](https://developercertificate.org/) instead of a CLA. Every commit must carry a `Signed-off-by` trailer certifying you have the right to submit the change under Apache-2.0:
+
+```bash
+git commit -s   # adds: Signed-off-by: Your Name <you@example.com>
+```
+
+Forgot it? `git commit --amend -s` (single commit) or `git rebase --signoff main` (a branch). The CI `DCO` check blocks PRs containing unsigned commits (merge commits are exempt).
+
 ## AI usage disclosure
 
 This project is developed with substantial AI assistance (Claude). We are transparent about it: AI-assisted commits carry a `Co-Authored-By: Claude ...` trailer. Contributors are welcome to use AI tools; you remain fully responsible for what you submit — review it, test it, understand it. Disclose substantial AI assistance the same way (co-author trailer or PR note).
