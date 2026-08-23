@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# pre-push hook: scan outgoing commits for secrets with gitleaks.
+# Installed by `make install-hooks` (hack/install-git-hooks.sh).
+# k8s-r8r is a public repository — nothing sensitive may leave this machine.
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-push: gitleaks not found — install it (brew install gitleaks) or bypass ONCE with --no-verify" >&2
+  exit 1
+fi
+
+zero=0000000000000000000000000000000000000000
+status=0
+
+# stdin: <local ref> <local sha> <remote ref> <remote sha>
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # deleting a remote ref — nothing to scan
+  if [ "$remote_sha" = "$zero" ]; then
+    range="$local_sha" # new branch: scan the pushed history
+    log_opts="$range --not --remotes=origin"
+  else
+    log_opts="$remote_sha..$local_sha"
+  fi
+  if ! gitleaks git --log-opts="$log_opts" --no-banner --redact .; then
+    status=1
+  fi
+done
+
+if [ "$status" -ne 0 ]; then
+  echo "" >&2
+  echo "pre-push: gitleaks found potential secrets in outgoing commits — push blocked." >&2
+  echo "Remove the secret from history (rebase/amend), or allowlist a false positive in .gitleaks.toml." >&2
+fi
+exit "$status"
