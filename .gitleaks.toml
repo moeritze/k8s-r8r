@@ -1,0 +1,19 @@
+# gitleaks configuration for k8s-r8r (public repo — every push is scanned)
+# Local gate: pre-push hook (make install-hooks). Server gate: CI job.
+
+[extend]
+# Start from gitleaks' built-in default ruleset.
+useDefault = true
+
+[allowlist]
+description = "Known-safe fixtures and generated material"
+paths = [
+  # e2e testdata: minimal CAPI CRD stub, contains no credentials
+  '''test/e2e/testdata/.*''',
+  # helm chart golden values: placeholder-only
+  '''charts/k8s-r8r/values\.yaml''',
+]
+regexes = [
+  # obviously-fake placeholders used in docs and tests
+  '''REDACTED|CHANGEME|example\.com|fake-token|dummy''',
+]

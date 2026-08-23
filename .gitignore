@@ -28,3 +28,9 @@ go.work
 
 # Kubeconfig might contain secrets
 *.kubeconfig
+
+# graphify knowledge-graph build artifacts
+graphify-out/
+
+# generated obsidian knowledge-graph vault (regenerate: graphify export obsidian --dir obsidian/graph)
+obsidian/graph/
