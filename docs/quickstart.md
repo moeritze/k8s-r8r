@@ -14,6 +14,26 @@ Secret for replication.
 - Optional: [cert-manager](https://cert-manager.io) on the hub for the
   advisory webhook (the quickstart skips it)
 
+## Install from published artifacts
+
+Released versions ship as a container image
+(`ghcr.io/moeritze/k8s-r8r:<tag>`) and a Helm chart in an OCI registry —
+no clone or local build needed. Pick a version from the
+[releases page](https://github.com/moeritze/k8s-r8r/releases) and:
+
+```sh
+helm install k8s-r8r oci://ghcr.io/moeritze/charts/k8s-r8r \
+  --version <x.y.z> \
+  --namespace k8s-r8r-system --create-namespace
+```
+
+The chart's default image repository and tag point at the image published
+for that release, so the operator image is pulled automatically. See
+[releasing.md](releasing.md) for how releases are cut.
+
+The rest of this quickstart is the **development path**: build the image
+locally and run it on a kind fleet.
+
 ## 1. Create a local fleet
 
 ```sh

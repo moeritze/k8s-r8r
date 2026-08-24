@@ -34,8 +34,9 @@ That's the whole developer API. An admin-owned, default-deny
 data model are designed not to change); the feature surface ships narrow.
 Unit and envtest coverage exists across the controllers, policy engine,
 and webhook; **the cross-cluster path is not yet exercised by an
-end-to-end suite**, and no versioned release or published image exists
-yet. Expect rough edges; do not run it against production fleets.
+end-to-end suite**. Version tags publish a multi-arch image and Helm
+chart to ghcr (see [docs/releasing.md](docs/releasing.md)). Expect rough
+edges; do not run it against production fleets.
 
 ## Features
 
@@ -97,12 +98,19 @@ additions, not rewrites.
 
 ## Getting started
 
-Install via the in-repo Helm chart (no published registry yet):
+Install a released version from the published Helm chart (pick a version
+from the [releases](https://github.com/moeritze/k8s-r8r/releases)):
 
 ```sh
-helm install k8s-r8r charts/k8s-r8r \
+helm install k8s-r8r oci://ghcr.io/moeritze/charts/k8s-r8r \
+  --version <x.y.z> \
   --namespace k8s-r8r-system --create-namespace
 ```
+
+The chart pulls the matching operator image
+(`ghcr.io/moeritze/k8s-r8r`) automatically. For development, install the
+in-repo chart instead (`helm install k8s-r8r charts/k8s-r8r ...` with a
+locally built image — see the quickstart).
 
 Requires Kubernetes **1.30+** and, for the optional advisory webhook,
 cert-manager (or bring your own cert — see the chart's `values.yaml`).
@@ -115,6 +123,7 @@ fleet walkthrough.
 | Doc | Contents |
 |---|---|
 | [docs/quickstart.md](docs/quickstart.md) | kind fleet, Helm install, annotate-a-Secret walkthrough |
+| [docs/releasing.md](docs/releasing.md) | release process: tag → published image + chart + GitHub release |
 | [docs/annotations.md](docs/annotations.md) | full `r8r.io/*` annotation reference |
 | [docs/policies.md](docs/policies.md) | `ReplicationPolicy` authoring guide |
 | [docs/gitops.md](docs/gitops.md) | ArgoCD integration, ignore rules, sealed-secrets/ESO complementarity |

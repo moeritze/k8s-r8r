@@ -14,6 +14,10 @@ kubebuilder project, module `github.com/moeritze/k8s-r8r`, API group `r8r.io/v1a
 2. **e2e** — `make test-e2e`: provisions a real kind fleet (`hack/kind-fleet.sh`, hub + 2 spokes), simulates ClusterAPI with a minimal CRD + status-patched `Cluster` objects + `--internal` kubeconfig Secrets, exercises full [[replication-flow]], [[cluster-discovery|cluster lifecycle]], and scale. `K8S_R8R_E2E_KEEP=1` keeps the fleet for debugging.
 3. **CI** (`.github/workflows/ci.yml`) — lint (custom golangci-lint w/ logcheck), test, build, e2e. Lint runs the same binary locally via `make lint`.
 
+## Release process
+
+Pushing a semver tag (`v*`) triggers `.github/workflows/release.yml`: multi-arch image (amd64/arm64) → `ghcr.io/moeritze/k8s-r8r:<tag>` (stable tags also move `:latest`), Helm chart → `oci://ghcr.io/moeritze/charts/k8s-r8r` (chart version = tag without `v`, appVersion = tag, so the chart's default image tag matches the published image), plus a GitHub release with generated notes. Tags containing `-` (`-alpha.N` convention) are prereleases and never move `:latest`. Actions SHA-pinned, `GITHUB_TOKEN` only. Install side: [[operations]]; full walkthrough: `../docs/releasing.md`.
+
 ## Documentation workflow (keep in sync — part of every change)
 
 Three layers, updated together:
