@@ -22,6 +22,6 @@ Leader election (single writer, standby failover from persisted CRs/inventory). 
 
 ## Install / uninstall
 
-Helm chart `charts/k8s-r8r` (webhook cert-manager toggle, personas, metrics). Teardown order matters: remove annotations/policies → replicas GC → `helm uninstall`; finalizer escape hatch documented in `../docs/uninstall.md`.
+Released versions install from the published chart: `helm install k8s-r8r oci://ghcr.io/moeritze/charts/k8s-r8r --version <x.y.z>` — pulls the matching `ghcr.io/moeritze/k8s-r8r` image automatically ([[development|release process]], `../docs/releasing.md`). For development, the in-repo chart `charts/k8s-r8r` (webhook cert-manager toggle, personas, metrics). Teardown order matters: remove annotations/policies → replicas GC → `helm uninstall`; finalizer escape hatch documented in `../docs/uninstall.md`.
 
 Spec: `openspec/specs/observability-operations`
