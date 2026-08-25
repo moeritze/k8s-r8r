@@ -165,9 +165,12 @@ jobs:
           # helm push reports the pushed manifest digest; capture it so the
           # signature is bound to an immutable digest rather than a tag.
           helm push "k8s-r8r-${version}.tgz" "oci://${CHART_REPO}" 2>&1 | tee push.log
-          digest="$(grep -oE 'sha256:[0-9a-f]{64}' push.log | head -n1)"
+          # `|| true` so a no-match falls through to the explicit check below
+          # rather than tripping set -e/pipefail with no explanation.
+          digest="$(grep -oE 'sha256:[0-9a-f]{64}' push.log | head -n1 || true)"
           if [ -z "$digest" ]; then
             echo "::error::could not parse chart digest from helm push output"
+            cat push.log
             exit 1
           fi
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
