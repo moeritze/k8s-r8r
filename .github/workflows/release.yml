@@ -2,9 +2,10 @@ name: Release
 
 # Publishes release artifacts when a version tag (v*) is pushed:
 #   - multi-arch operator image  -> ghcr.io/moeritze/k8s-r8r:<tag> (+ :latest for stable tags)
-#   - packaged Helm chart        -> oci://ghcr.io/moeritze/charts/k8s-r8r
+#     signed (cosign keyless) + SBOM + SLSA provenance attestations
+#   - packaged Helm chart        -> oci://ghcr.io/moeritze/charts/k8s-r8r (cosign signed)
 #   - GitHub release with generated notes (prerelease when the tag contains '-')
-# See docs/releasing.md.
+# Consumer-side verification commands live in docs/releasing.md.
 
 on:
   push:
@@ -13,13 +14,19 @@ on:
 
 permissions: {}
 
+env:
+  IMAGE_NAME: ghcr.io/moeritze/k8s-r8r
+  CHART_REPO: ghcr.io/moeritze/charts
+
 jobs:
   publish-image:
     name: Publish container image (ghcr)
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      packages: write # push image + cosign signature + attestation referrers
+      id-token: write # cosign keyless (Sigstore OIDC) + attestation signing
+      attestations: write # actions/attest-build-provenance
     steps:
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -45,35 +52,102 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          tags="ghcr.io/moeritze/k8s-r8r:${TAG}"
+          tags="${IMAGE_NAME}:${TAG}"
           # Stable semver only (no '-'): also move :latest.
           case "$TAG" in
             *-*) echo "prerelease tag — skipping :latest" ;;
-            *)   tags="${tags},ghcr.io/moeritze/k8s-r8r:latest" ;;
+            *)   tags="${tags},${IMAGE_NAME}:latest" ;;
           esac
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
 
+      # Labels/annotations only — tag selection stays with the step above so the
+      # :latest / prerelease semantics are expressed in one place.
+      # ANNOTATIONS_LEVELS=index,manifest is what makes the OCI annotations land
+      # on the multi-arch image *index*, not just the per-arch child manifests.
+      - name: Compute OCI labels and annotations
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index,manifest
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          flavor: latest=false
+          tags: type=ref,event=tag
+          # Defaults already cover title/description/url/source/version/created/
+          # revision/licenses from the repo + ref. These pin the two that would
+          # otherwise depend on the repo's GitHub description field.
+          # labels and annotations take separate inputs — keep them in sync.
+          labels: |
+            org.opencontainers.image.description=Kubernetes operator for policy-gated cross-cluster replication of Secrets and ConfigMaps
+            org.opencontainers.image.documentation=https://github.com/moeritze/k8s-r8r/blob/main/README.md
+          annotations: |
+            org.opencontainers.image.description=Kubernetes operator for policy-gated cross-cluster replication of Secrets and ConfigMaps
+            org.opencontainers.image.documentation=https://github.com/moeritze/k8s-r8r/blob/main/README.md
+
       - name: Build and push (linux/amd64, linux/arm64)
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          # BuildKit attestations, attached to the pushed index as OCI
+          # attestation manifests (readable with `docker buildx imagetools inspect`).
+          sbom: true
+          provenance: mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Signs the multi-arch index digest. Verifying by tag works too: cosign
+      # resolves the tag to this same digest.
+      - name: Sign image (keyless, by digest)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
+
+      # Sigstore-signed SLSA provenance, recorded in the GitHub attestations API
+      # and pushed to ghcr as an OCI referrer of the image digest.
+      # Verifiable with `gh attestation verify` and `cosign verify-attestation`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
 
   publish-chart:
     name: Publish Helm chart (ghcr OCI)
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      packages: write # push chart + cosign signature
+      id-token: write # cosign keyless (Sigstore OIDC)
     steps:
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
+      # cosign reads ~/.docker/config.json; `helm registry login` only writes
+      # helm's own registry config, so log in with docker too.
+      - name: Log in to ghcr.io
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
       - name: Package and push chart
+        id: chart
         env:
           TAG: ${{ github.ref_name }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -88,7 +162,25 @@ jobs:
           helm package charts/k8s-r8r \
             --version "${version}" \
             --app-version "${TAG}"
-          helm push "k8s-r8r-${version}.tgz" oci://ghcr.io/moeritze/charts
+          # helm push reports the pushed manifest digest; capture it so the
+          # signature is bound to an immutable digest rather than a tag.
+          helm push "k8s-r8r-${version}.tgz" "oci://${CHART_REPO}" 2>&1 | tee push.log
+          # `|| true` so a no-match falls through to the explicit check below
+          # rather than tripping set -e/pipefail with no explanation.
+          digest="$(grep -oE 'sha256:[0-9a-f]{64}' push.log | head -n1 || true)"
+          if [ -z "$digest" ]; then
+            echo "::error::could not parse chart digest from helm push output"
+            cat push.log
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Sign chart (keyless, by digest)
+        env:
+          DIGEST: ${{ steps.chart.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${CHART_REPO}/k8s-r8r@${DIGEST}"
 
   github-release:
     name: Create GitHub release
