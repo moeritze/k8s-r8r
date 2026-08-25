@@ -155,6 +155,31 @@ requires both the request and a policy to permit it (default is `Fail`).
 renaming does not exist: a silent rename would break workloads that mount
 by name with no error surfaced anywhere.
 
+## Supply chain
+
+A component that reads every Secret in a fleet is worth verifying before you
+run it. Released images and charts are therefore:
+
+- **signed** — cosign keyless, GitHub Actions OIDC, no long-lived key exists;
+- **attested** — SLSA build provenance (`actions/attest-build-provenance`,
+  pushed to ghcr and to the GitHub attestations API) plus max-mode BuildKit
+  provenance;
+- **SBOM'd** — SPDX SBOM per platform, attached to the published image index;
+- **labelled** — OCI annotations on the multi-arch index, including
+  `org.opencontainers.image.source` pointing at this repository.
+
+Copy-pasteable `cosign verify` / `gh attestation verify` commands, and how to
+turn the keyless identity into an admission policy, are in
+[releasing.md](releasing.md#verifying-a-release). Do not skip this step for a
+fleet-wide Secret reader.
+
+Build-side hygiene: every GitHub Actions `uses:` is pinned to a commit SHA
+(Dependabot keeps the pins fresh weekly), workflows default to
+`permissions: {}` with least-privilege grants at job scope, gitleaks scans
+full history on every push and PR, and `govulncheck` runs on every PR **and**
+weekly on a schedule — the vulnerability database moves even when the code
+does not.
+
 ## What k8s-r8r does not protect against
 
 - A compromised hub API server or hub cluster admin — the hub is the

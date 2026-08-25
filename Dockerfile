@@ -24,6 +24,20 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ma
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot
+
+# Static OCI labels. The release workflow additionally injects the dynamic ones
+# (org.opencontainers.image.version / .revision / .created) via
+# docker/metadata-action, which override anything set here.
+# org.opencontainers.image.source is what links the ghcr package page back to
+# this repository (source link + README on the package page).
+LABEL org.opencontainers.image.title="k8s-r8r" \
+      org.opencontainers.image.description="Kubernetes operator for policy-gated cross-cluster replication of Secrets and ConfigMaps" \
+      org.opencontainers.image.source="https://github.com/moeritze/k8s-r8r" \
+      org.opencontainers.image.url="https://github.com/moeritze/k8s-r8r" \
+      org.opencontainers.image.documentation="https://github.com/moeritze/k8s-r8r/blob/main/README.md" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.vendor="moeritze"
+
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532
