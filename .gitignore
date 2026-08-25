@@ -26,6 +26,12 @@ go.work
 *.swo
 *~
 
+# OS cruft
+.DS_Store
+
+# local agent/tooling scratch state
+.remember/
+
 # Kubeconfig might contain secrets
 *.kubeconfig
 
