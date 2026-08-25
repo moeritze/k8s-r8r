@@ -1,6 +1,10 @@
 # k8s-r8r
 
-<!-- badge placeholder: CI --> ![status: alpha](https://img.shields.io/badge/status-alpha-orange)
+[![CI](https://img.shields.io/github/actions/workflow/status/moeritze/k8s-r8r/ci.yml?branch=main&label=CI)](https://github.com/moeritze/k8s-r8r/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/moeritze/k8s-r8r?include_prereleases&label=release)](https://github.com/moeritze/k8s-r8r/releases)
+[![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/moeritze/k8s-r8r)](https://goreportcard.com/report/github.com/moeritze/k8s-r8r)
+![status: alpha](https://img.shields.io/badge/status-alpha-orange)
 
 **Kubernetes object replication operator**: fan out Secrets and ConfigMaps
 across namespaces and across a fleet of clusters — declaratively,
@@ -32,11 +36,55 @@ That's the whole developer API. An admin-owned, default-deny
 
 **v0 / alpha.** The architecture is deliberately final (interfaces and
 data model are designed not to change); the feature surface ships narrow.
-Unit and envtest coverage exists across the controllers, policy engine,
-and webhook; **the cross-cluster path is not yet exercised by an
-end-to-end suite**. Version tags publish a multi-arch image and Helm
-chart to ghcr (see [docs/releasing.md](docs/releasing.md)). Expect rough
-edges; do not run it against production fleets.
+
+**What is tested.** Unit and envtest coverage spans the controllers,
+policy engine, and webhook. The cross-cluster path is covered by an
+end-to-end suite that provisions a real kind fleet (hub + 2 spokes),
+builds and side-loads the operator image, installs the Helm chart, and
+simulates ClusterAPI inventory — exercising replication lifecycle,
+conflict handling, namespace ensure, policy revocation, source-delete
+cleanup, cluster registration/deregistration, and fanout at scale
+(`test/e2e/`). All of it runs on every pull request; `E2E (kind fleet,
+hub + 2 spokes)` is a required status check on `main`.
+
+**What is unproven.** Real-world operation. There is no production
+adopter and no run against a live ClusterAPI fleet yet — everything above
+happens in CI, against clusters the suite creates itself. Expect rough
+edges in day-2 ergonomics, upgrade paths, and failure modes CI does not
+reach. Do not run it against production fleets.
+
+Version tags publish a multi-arch image and Helm chart to ghcr (see
+[docs/releasing.md](docs/releasing.md)).
+
+## Trust model
+
+k8s-r8r moves Secrets, so the honest question is what a compromise buys
+an attacker. Full threat model in [docs/security.md](docs/security.md);
+the short version:
+
+| Identity | Grant | Scope |
+|---|---|---|
+| Hub operator SA | `get`/`list`/`watch` (+ `patch`/`update` for finalizers) on Secrets and ConfigMaps; `get`/`list`/`watch` on Namespaces | cluster-wide on the hub |
+| Hub operator SA | `get`/`list`/`watch` on ClusterAPI `Cluster` objects, and uncached reads of their `<cluster>-kubeconfig` Secrets | cluster-wide on the hub |
+| Hub operator SA | full write on `Replication`; read-only (`get`/`list`/`watch`) on `ReplicationPolicy` | cluster-wide on the hub |
+| Spoke SA (`k8s-r8r`) | `get`/`list`/`watch`/`create`/`update`/`patch`/`delete` on the allowlisted kinds only; `get`/`create`/`patch` on Namespaces (never `delete`) | all namespaces of the spoke (v1: one ClusterRole; per-namespace narrowing is planned) |
+
+**Blast radius, stated plainly:** compromise of the hub operator pod
+means fleet-wide read of every replicable Secret and ConfigMap on the
+hub, plus the ability to read CAPI admin kubeconfigs for discovered
+clusters and therefore to bootstrap into those spokes. The operator is a
+high-value target; treat its namespace and its CAPI kubeconfig Secrets
+accordingly.
+
+**What the design does to keep that radius bounded:** the CAPI admin
+kubeconfig is read uncached and used exactly once per spoke, to bootstrap
+a ServiceAccount scoped to the allowlisted resource kinds — steady-state
+traffic authenticates with short-lived, self-rotated SA tokens, and the
+spoke rest config carries no static credential at all. Spoke RBAC is
+re-narrowed when the allowlist shrinks. Replica payloads are never cached
+on the hub (drift watches use metadata-only informers plus a source-hash
+annotation), and no payload data ever reaches logs, events, conditions,
+or metrics — hashes only, enforced by an AST audit test.
 
 ## Features
 
@@ -134,6 +182,7 @@ fleet walkthrough.
 
 ```sh
 make test          # unit + envtest
+make test-e2e      # kind fleet (hub + 2 spokes) e2e suite — needs docker
 make lint          # golangci-lint
 make manifests     # regenerate CRDs/RBAC from markers
 hack/kind-fleet.sh up   # local hub + spokes
