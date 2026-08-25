@@ -1,0 +1,67 @@
+version: 2
+
+# Weekly dependency updates. Grouped so a week's worth of bumps arrives as a
+# small number of reviewable PRs rather than one per module.
+#
+# Note on SHA pinning: every `uses:` in this repo is pinned to a commit SHA with
+# a trailing `# vX.Y.Z` comment. Dependabot's github-actions ecosystem
+# understands that convention — it rewrites both the SHA and the version comment
+# — so pinning does not opt the repo out of action updates.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
+    labels:
+      - dependencies
+      - go
+    groups:
+      k8s:
+        patterns:
+          - k8s.io/*
+          - sigs.k8s.io/*
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: / # covers all of .github/workflows
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: / # the root Dockerfile (builder + distroless base)
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: build
+      include: scope
+    labels:
+      - dependencies
+      - docker

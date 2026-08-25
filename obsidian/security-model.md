@@ -32,4 +32,8 @@ No log, event, condition, or metric ever contains payload data — hashes only. 
 - `Overwrite` conflict mode could replace a victim cluster's secret → policy-gated, `Fail` default; replicas of a *different* source are never taken over ([[replication-flow]]).
 - Exfiltration via annotation → blocked by default-deny [[policy-model]]; no request-side override exists.
 
-Repo hygiene: public repo — gitleaks pre-push hook + CI job gate every push (see [[development]]).
+## Supply chain
+
+Released images/charts are cosign-signed (keyless, GitHub OIDC — no long-lived key), carry SPDX SBOMs and SLSA provenance attestations, and are OCI-labelled back to the repo. Verify before running a fleet-wide Secret reader: `../docs/releasing.md#verifying-a-release`. Build-side details and rationale: [[development#supply-chain-what-a-release-proves]].
+
+Repo hygiene: public repo — gitleaks pre-push hook + CI job gate every push; govulncheck on every PR and weekly on cron; actions SHA-pinned with Dependabot refresh (see [[development]]).

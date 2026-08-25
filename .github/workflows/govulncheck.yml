@@ -1,0 +1,43 @@
+name: Vulnerability scan
+
+# govulncheck reports only vulnerabilities that are actually *reachable* from
+# this module's code paths, so a clean run is a meaningful statement.
+#
+# Kept out of ci.yml deliberately: the schedule trigger is the point (the Go
+# vulnerability database moves even when the code does not), and a `schedule`
+# entry on ci.yml would either fire every CI job weekly or need an `if:` guard
+# on each of them. A separate workflow also gives this a stable, distinct check
+# name for branch protection.
+
+on:
+  pull_request:
+  schedule:
+    # Mondays 06:17 UTC — after the Dependabot window, off the top of the hour.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Scans module dependencies *and* the standard library of the toolchain
+      # from go.mod. Exits non-zero when a reachable vulnerability is found.
+      # The action runs its own setup-go; go-version-input is blanked so that
+      # go-version-file (not the action's default "stable") selects the version.
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
+        with:
+          go-version-input: ""
+          go-version-file: go.mod
+          repo-checkout: "false" # already checked out above
+          go-package: ./...
