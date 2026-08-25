@@ -30,14 +30,19 @@ jobs:
         with:
           persist-credentials: false
 
-      # Scans module dependencies *and* the standard library of the toolchain
-      # from go.mod. Exits non-zero when a reachable vulnerability is found.
-      # The action runs its own setup-go; go-version-input is blanked so that
-      # go-version-file (not the action's default "stable") selects the version.
+      # Scans module dependencies *and* the standard library. Exits non-zero
+      # when a reachable vulnerability is found — reachability is why a clean
+      # run means something rather than being a CVE-count ritual.
+      #
+      # The toolchain deliberately tracks the Dockerfile's builder tag
+      # (`FROM golang:1.26`, a floating patch tag) rather than go.mod's
+      # `go 1.26.0` directive: go.mod states the module's *minimum* toolchain,
+      # while the shipped binary always gets the newest 1.26.x. Scanning at the
+      # minimum over-reports stdlib patch findings we do not actually ship.
+      # Keep this minor version in sync with the Dockerfile.
       - name: Run govulncheck
         uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
         with:
-          go-version-input: ""
-          go-version-file: go.mod
+          go-version-input: "1.26"
           repo-checkout: "false" # already checked out above
           go-package: ./...
