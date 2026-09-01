@@ -18,6 +18,7 @@ func (s *stubProvider) Start(ctx context.Context) error {
 	return nil
 }
 func (s *stubProvider) List() []ClusterRecord { return s.records }
+func (s *stubProvider) Watching() bool        { return true }
 
 func TestRegistry(t *testing.T) {
 	r := NewRegistry()

@@ -62,6 +62,26 @@ func operatorPodReady(g Gomega) {
 	g.Expect(readyPods).To(BeNumerically(">=", 1), "operator pod must stay Ready")
 }
 
+// TestCAPIVersionNegotiation asserts the operator negotiated the CAPI
+// Cluster API version instead of pinning one (issue #28). The stand-in CRD
+// serves the deprecated v1beta1 alongside v1beta2, so a provider that still
+// pinned v1beta1 would pass every other test in this suite while being
+// exactly one CAPI release away from a silent, total outage. The negotiated
+// version is only observable in the operator's log, which is the point: it
+// is what makes future version skew visible before it becomes an incident.
+func TestCAPIVersionNegotiation(t *testing.T) {
+	g := NewWithT(t)
+	g.Eventually(func(g Gomega) {
+		out, err := kubectl(hubCluster, "-n", operatorNamespace, "logs",
+			"-l", "control-plane=controller-manager", "--tail=-1")
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(out).To(ContainSubstring("Negotiated ClusterAPI discovery version"),
+			"operator never logged a negotiated CAPI version")
+		g.Expect(out).To(ContainSubstring("cluster.x-k8s.io/v1beta2"),
+			"operator did not negotiate v1beta2 from a CRD serving v1beta1 and v1beta2")
+	}, 2*time.Minute, 5*time.Second).Should(Succeed())
+}
+
 // TestClusterLifecycle drives spoke-2 through outage, deregistration, and
 // fresh re-registration while a replication to both spokes is live. It ends
 // with a fully healthy fleet.

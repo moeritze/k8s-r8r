@@ -102,4 +102,11 @@ type Provider interface {
 	Start(ctx context.Context) error
 	// List returns a snapshot of all currently known cluster records.
 	List() []ClusterRecord
+	// Watching reports whether the provider's inventory source is
+	// established (for watch-based providers: the informer is running and
+	// synced). It exists because List alone cannot distinguish a broken
+	// provider from a fleet with no clusters — both return nothing — and
+	// that ambiguity is exactly what makes a discovery outage invisible.
+	// It is the source of the k8s_r8r_discovery_up metric.
+	Watching() bool
 }
