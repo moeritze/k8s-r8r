@@ -33,6 +33,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -87,6 +88,66 @@ const (
 	r8rKeyPrefix = "r8r.io/"
 )
 
+// foreignOwnershipKeyPrefixes are key prefixes that assert ownership by, or
+// replication intent toward, another controller. They are stripped from
+// replicas and excluded from hashing (replication-engine spec, "Foreign
+// ownership metadata is not replicated").
+//
+// Copying them is not cosmetic. A replica carrying
+// replicator.v1.mittwald.de/replicate-to-clusters is itself a valid source for
+// mittwald/kubernetes-replicator, so k8s-r8r would seed a second fanout whose
+// destinations no ReplicationPolicy ever evaluated — a request-side override
+// of default-deny. The GitOps prefixes are the mirror hazard: a replica
+// claiming membership in an Application that never declared it is an
+// extraneous object, and prunable.
+var foreignOwnershipKeyPrefixes = []string{
+	"argocd.argoproj.io/",              // Argo CD tracking-id / sync options
+	"replicator.v1.mittwald.de/",       // mittwald/kubernetes-replicator
+	"reflector.v1.k8s.emberstack.com/", // emberstack/kubernetes-reflector
+	"meta.helm.sh/",                    // Helm release ownership
+	"kustomize.toolkit.fluxcd.io/",     // Flux kustomize-controller ownership
+}
+
+// foreignOwnershipKeys are exact keys stripped for the same reason. The Argo CD
+// instance label is the default resource-tracking key: a replica carrying it is
+// claimed by an Application that never declared it, and prunes with it.
+var foreignOwnershipKeys = []string{
+	"app.kubernetes.io/instance",
+}
+
+// extraStrippedKeys and extraStrippedPrefixes hold the operator's additions to
+// the built-in denylist (--strip-metadata-keys). They are process-wide rather
+// than Renderer fields because SourceHash is a package-level function: keeping
+// the render path and the hash path on one denylist is what prevents a replica
+// that never converges (see design D1/D4).
+var (
+	extraStrippedKeys     []string
+	extraStrippedPrefixes []string
+)
+
+// SetExtraStrippedKeys configures additional label/annotation keys to strip
+// from replicas and exclude from hashing, on top of the built-in denylist. An
+// entry ending in "/" is a prefix match; anything else is an exact key match.
+// Empty entries are ignored.
+//
+// The configuration is additive only — built-in entries cannot be removed,
+// since removing them reintroduces the cross-controller fanout the denylist
+// exists to prevent. Call once during startup, before any reconciler runs.
+func SetExtraStrippedKeys(keys []string) {
+	extraStrippedKeys = nil
+	extraStrippedPrefixes = nil
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		switch {
+		case k == "" || k == "/":
+		case strings.HasSuffix(k, "/"):
+			extraStrippedPrefixes = append(extraStrippedPrefixes, k)
+		default:
+			extraStrippedKeys = append(extraStrippedKeys, k)
+		}
+	}
+}
+
 // serverManagedMetadataFields are the metadata fields stripped from replicas:
 // server-managed and identity fields that must never be copied across
 // clusters (replication-engine spec, "Kind-agnostic pipeline").
@@ -112,8 +173,12 @@ type Renderer struct {
 }
 
 // Render produces the replica for one target slot: a deep copy of the source
-// with server-managed fields stripped, engine identity labels applied, and
-// the source-hash annotation set. targetName overrides the replica name when
+// with server-managed fields and stripped metadata keys (isStrippedKey:
+// pipeline-owned keys plus foreign ownership metadata) removed, engine
+// identity labels applied, and the source-hash annotation set. All other
+// source labels and annotations propagate — they can be functionally
+// significant on the target, so this is a denylist, never an allowlist.
+// targetName overrides the replica name when
 // non-empty (the explicit r8r.io/target-name mechanism; automatic renaming
 // never occurs, design D7). The returned hash is SourceHash(src).
 func (r Renderer) Render(src *unstructured.Unstructured, targetNamespace, targetName string) (*unstructured.Unstructured, string) {
@@ -127,7 +192,7 @@ func (r Renderer) Render(src *unstructured.Unstructured, targetNamespace, target
 	}
 	rep.SetName(targetName)
 
-	labels := cleanPipelineKeys(rep.GetLabels())
+	labels := cleanStrippedKeys(rep.GetLabels())
 	if labels == nil {
 		labels = map[string]string{}
 	}
@@ -139,7 +204,7 @@ func (r Renderer) Render(src *unstructured.Unstructured, targetNamespace, target
 	labels[LabelSourceUID] = string(src.GetUID())
 	rep.SetLabels(labels)
 
-	ann := cleanPipelineKeys(rep.GetAnnotations())
+	ann := cleanStrippedKeys(rep.GetAnnotations())
 	if ann == nil {
 		ann = map[string]string{}
 	}
@@ -184,8 +249,9 @@ func (r Renderer) hubName() string {
 //   - status and all server-managed metadata (they differ per cluster),
 //   - metadata identity (name, namespace) so an explicitly renamed replica
 //     still hashes equal to its source and Adopt comparisons work,
-//   - every key the pipeline itself writes (r8r.io/*, the managed-by label,
-//     kubectl's last-applied annotation), so source and replica hash
+//   - every key stripped from replicas (isStrippedKey): the pipeline's own
+//     keys (r8r.io/*, the managed-by label, kubectl's last-applied
+//     annotation) and foreign ownership metadata, so source and replica hash
 //     identically.
 //
 // Determinism: the canonical form is Go's JSON encoding of the reduced
@@ -237,29 +303,57 @@ func stripServerManaged(obj *unstructured.Unstructured) {
 	}
 }
 
-// isPipelineKey reports whether a label/annotation key is written by the
-// replication pipeline itself and must therefore be stripped from replicas
-// (before re-adding current values) and excluded from hashing.
-func isPipelineKey(k string) bool {
-	return strings.HasPrefix(k, r8rKeyPrefix) || k == LabelManagedBy || k == annotationLastApplied
+// isStrippedKey reports whether a label/annotation key must be removed from
+// replicas (before the engine re-adds its own current values) and excluded
+// from hashing. Two disjoint reasons, one predicate:
+//
+//   - keys the replication pipeline itself writes (r8r.io/*, the managed-by
+//     label, kubectl's last-applied annotation), so request annotations never
+//     propagate to spokes and source and replica hash identically;
+//   - keys asserting another controller's ownership or replication intent,
+//     which must not travel with the payload.
+//
+// Both the render path (cleanStrippedKeys) and the hash path (cleanRawKeys)
+// route through here on purpose: a key stripped from the replica but retained
+// in the hash would make SourceHash(replica) != SourceHash(source) forever, so
+// the engine would re-apply on every reconcile and hot-loop against every
+// spoke through the drift handler.
+func isStrippedKey(k string) bool {
+	if strings.HasPrefix(k, r8rKeyPrefix) || k == LabelManagedBy || k == annotationLastApplied {
+		return true
+	}
+	if slices.Contains(foreignOwnershipKeys, k) || slices.Contains(extraStrippedKeys, k) {
+		return true
+	}
+	for _, p := range foreignOwnershipKeyPrefixes {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	for _, p := range extraStrippedPrefixes {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
 }
 
-// cleanPipelineKeys returns a copy of m without pipeline-owned keys; nil in,
-// nil out.
-func cleanPipelineKeys(m map[string]string) map[string]string {
+// cleanStrippedKeys returns a copy of m without stripped keys; nil in, nil
+// out.
+func cleanStrippedKeys(m map[string]string) map[string]string {
 	if m == nil {
 		return nil
 	}
 	out := make(map[string]string, len(m))
 	for k, v := range m {
-		if !isPipelineKey(k) {
+		if !isStrippedKey(k) {
 			out[k] = v
 		}
 	}
 	return out
 }
 
-// cleanRawKeys is cleanPipelineKeys over the raw unstructured representation
+// cleanRawKeys is cleanStrippedKeys over the raw unstructured representation
 // of a string map.
 func cleanRawKeys(raw any) map[string]any {
 	m, ok := raw.(map[string]any)
@@ -268,7 +362,7 @@ func cleanRawKeys(raw any) map[string]any {
 	}
 	out := make(map[string]any, len(m))
 	for k, v := range m {
-		if !isPipelineKey(k) {
+		if !isStrippedKey(k) {
 			out[k] = v
 		}
 	}
