@@ -36,8 +36,16 @@ go.work
 # Kubeconfig might contain secrets
 *.kubeconfig
 
-# graphify knowledge-graph build artifacts
-graphify-out/
+# graphify knowledge-graph build artifacts.
+# The queryable graph, the audit report and the agent-crawlable wiki are
+# committed so a fresh clone can answer questions without a rebuild (see the
+# graphify section of CLAUDE.md). Everything else is local: the extraction
+# cache, the dated pre-rebuild backups, and the HTML render, which is large
+# and regenerates from graph.json with `graphify export html`.
+graphify-out/*
+!graphify-out/graph.json
+!graphify-out/GRAPH_REPORT.md
+!graphify-out/wiki/
 
 # generated obsidian knowledge-graph vault (regenerate: graphify export obsidian --dir obsidian/graph)
 obsidian/graph/
