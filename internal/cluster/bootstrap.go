@@ -60,15 +60,32 @@ type ScopedResource struct {
 	Resource string
 }
 
-// RBACScope parameterizes the spoke ClusterRole by the resource kinds the
-// current policy universe requires. Callers re-narrow by calling
-// Bootstrapper.UpdateRBAC with a smaller scope when the policy universe
-// shrinks.
+// RBACScope parameterizes the spoke ClusterRole by the resource kinds
+// replication is allowed to touch. Callers re-narrow by calling
+// Bootstrapper.UpdateRBAC with a smaller scope; Rules() is a full
+// replacement, so a smaller scope drops the removed kinds outright.
 //
-// v1 limitation: scoping is via a ClusterRole, so granted verbs apply in all
-// namespaces of the spoke (wildcard namespace scope). Narrowing to specific
-// namespaces (per-namespace Roles) is a future refinement; the RBACScope
-// type is the stable seam for it.
+// Two v1 limitations, both of which RBACScope is the stable seam for:
+//
+//   - Kind scope is not policy-derived. In production the only caller builds
+//     this from the --allowed-kinds flag (see parseAllowedKinds in
+//     cmd/main.go), not from the installed ReplicationPolicy objects, so the
+//     grant is a superset of what policy permits and exists from the moment a
+//     cluster is discovered, before any policy is authored. Re-narrowing
+//     therefore only tracks an --allowed-kinds change (which restarts the
+//     operator and re-bootstraps every spoke), never a policy change.
+//     Deriving the scope from the policy universe is deferred because
+//     *widening* a grant requires a credential that can escalate: doing it on
+//     every policy edit would turn the provider admin kubeconfig from a
+//     one-shot bootstrap credential into a routinely used one, which costs
+//     more than the over-broad grant it buys back (design D5). Tracked in
+//     issue #29.
+//   - Namespace scope is a wildcard. Scoping is via a ClusterRole, so granted
+//     verbs apply in all namespaces of the spoke. Narrowing to specific
+//     namespaces (per-namespace Roles) is a future refinement.
+//
+// Both limitations are disclosed in docs/security.md; keep that section and
+// this comment in sync with whatever an implementation changes here.
 type RBACScope struct {
 	// Resources are the replicated resource kinds.
 	Resources []ScopedResource
