@@ -81,7 +81,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -133,11 +133,6 @@ const (
 	EventReasonNameConflict = "ReplicationNameConflict"
 )
 
-// actionMaterialize is the events-API action recorded on request-controller
-// events: everything this controller does is part of materializing (or
-// refusing to materialize) a request.
-const actionMaterialize = "Materialize"
-
 // ConditionNotAuthoritative is the condition type set on hand-authored
 // Replication objects. Such objects are never reconciled (replication-request
 // spec: canonical Replication objects are operator-owned).
@@ -180,7 +175,13 @@ type Reconciler struct {
 
 	// Recorder emits events on sources and Replications; defaulted in
 	// SetupWithManager.
-	Recorder events.EventRecorder
+	//
+	// This is deliberately the core/v1 recorder (client-go tools/record, i.e.
+	// manager.GetEventRecorderFor) and not the events.k8s.io one: only the
+	// core recorder populates firstTimestamp/lastTimestamp/count, which the
+	// universal `kubectl get events --sort-by=.lastTimestamp` idiom needs
+	// (issue #32).
+	Recorder record.EventRecorder
 
 	// Inventory supplies cluster snapshots for target resolution. Required.
 	Inventory ClusterInventory
@@ -221,7 +222,11 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.Scheme = mgr.GetScheme()
 	}
 	if r.Recorder == nil {
-		r.Recorder = mgr.GetEventRecorder("request-controller")
+		// Deliberately the core/v1 recorder, not the (newer) events.k8s.io one:
+		// only this recorder populates firstTimestamp/lastTimestamp/count, which
+		// `kubectl get events --sort-by=.lastTimestamp` needs (issue #32).
+		//nolint:staticcheck // SA1019: see above; GetEventRecorder omits the legacy timestamps.
+		r.Recorder = mgr.GetEventRecorderFor("request-controller")
 	}
 
 	allow := r.Allowlist
@@ -374,8 +379,8 @@ func (s *sourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	if !s.enabled {
 		if annotations.HasRequest(ann) && obj.GetDeletionTimestamp().IsZero() {
-			s.Recorder.Eventf(obj, nil, corev1.EventTypeWarning, EventReasonKindNotEnabled,
-				actionMaterialize, "kind %s is not enabled for replication; enabled kinds: %s",
+			s.Recorder.Eventf(obj, corev1.EventTypeWarning, EventReasonKindNotEnabled,
+				"kind %s is not enabled for replication; enabled kinds: %s",
 				s.gvk.Kind, s.enabledKinds)
 		}
 		return ctrl.Result{}, nil
@@ -390,8 +395,8 @@ func (s *sourceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		// Malformed contract: surface the exact parser message and keep any
 		// existing Replication untouched until the user fixes the typo —
 		// tearing down replicas over a syntax error would be destructive.
-		s.Recorder.Eventf(obj, nil, corev1.EventTypeWarning, EventReasonInvalidAnnotations,
-			actionMaterialize, "%s", err.Error())
+		s.Recorder.Eventf(obj, corev1.EventTypeWarning, EventReasonInvalidAnnotations,
+			"%s", err.Error())
 		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{}, s.materialize(ctx, obj, parsed)
@@ -458,8 +463,8 @@ func (s *sourceReconciler) materialize(ctx context.Context,
 		if len(denied) > 1 {
 			msg = fmt.Sprintf("%s (and %d more denied targets)", msg, len(denied)-1)
 		}
-		s.Recorder.Eventf(obj, nil, corev1.EventTypeWarning, EventReasonPolicyDenied,
-			actionMaterialize, "%s", msg)
+		s.Recorder.Eventf(obj, corev1.EventTypeWarning, EventReasonPolicyDenied,
+			"%s", msg)
 	}
 
 	rep := &r8rv1alpha1.Replication{}
@@ -473,8 +478,7 @@ func (s *sourceReconciler) materialize(ctx context.Context,
 		rep = s.desiredReplication(obj, key.Name, resolved)
 		if err := s.Create(ctx, rep); err != nil {
 			if apierrors.IsAlreadyExists(err) {
-				s.Recorder.Eventf(obj, nil, corev1.EventTypeWarning, EventReasonNameConflict,
-					actionMaterialize,
+				s.Recorder.Eventf(obj, corev1.EventTypeWarning, EventReasonNameConflict,
 					"Replication %q already exists and is not owned by this %s; not materializing",
 					key.Name, s.gvk.Kind)
 				return nil
@@ -484,8 +488,7 @@ func (s *sourceReconciler) materialize(ctx context.Context,
 	case err != nil:
 		return err
 	case !s.ownedBySource(rep, obj.GetName()):
-		s.Recorder.Eventf(obj, nil, corev1.EventTypeWarning, EventReasonNameConflict,
-			actionMaterialize,
+		s.Recorder.Eventf(obj, corev1.EventTypeWarning, EventReasonNameConflict,
 			"Replication %q already exists and is not owned by this %s; not materializing",
 			key.Name, s.gvk.Kind)
 		return nil
