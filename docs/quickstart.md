@@ -127,6 +127,13 @@ With **no ReplicationPolicy present, nothing replicates** — this is the
 default-deny security posture, not an error. The `Replication` status and
 events on the Secret report `PolicyDenied` with the failing dimension.
 
+Operator events are recorded through the core `v1` Event API, so the usual
+idiom works and orders them correctly:
+
+```sh
+kubectl -n demo get events --sort-by=.lastTimestamp
+```
+
 ## 4. Allow it with a ReplicationPolicy
 
 Policies are cluster-scoped, admin-owned allowlists (see

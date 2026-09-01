@@ -34,6 +34,8 @@ Note the pod stays **Ready** through all of these: readiness reflects hub inform
 
 Lifecycle transitions on sources and Replications (Replicated, PolicyDenied, Conflict, PolicyRevoked, ClusterGone, CleanedUp), rate-limited per object+reason (5m cooldown, changed messages pass) so flapping targets can't flood. [[security-model|Never any payload data]].
 
+Recorded through the **core `v1` Event API** (`mgr.GetEventRecorderFor`), not `events.k8s.io/v1`: only the core recorder fills `firstTimestamp`/`lastTimestamp`/`count`, so `kubectl get events --sort-by=.lastTimestamp` orders them correctly and client-go's correlator aggregates repeats into a real count series. Trade-off: no `action` / `reportingController` fields. The `events.k8s.io` RBAC grant is kept regardless (a missing grant fails silently with 403), ratcheted by a repo audit test.
+
 ## Status discipline (D8)
 
 Summary counts + `Ready` condition; per-target detail only for non-ready targets, capped at 20 + overflow counter; status writes skipped when unchanged. 60-target e2e fanout: 13.9KB status, zero churn over 2 minutes. Full per-target truth lives in metrics/events.

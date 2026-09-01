@@ -39,7 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -320,7 +320,7 @@ type testFixture struct {
 	ns        string
 	transport *fakeTransport
 	clusters  *stubClusters
-	recorder  *events.FakeRecorder
+	recorder  *record.FakeRecorder
 	rec       *Reconciler
 	secret    *corev1.Secret
 	rep       *r8rv1alpha1.Replication
@@ -335,7 +335,7 @@ func newFixture(t *testing.T, secretValue string, targets []r8rv1alpha1.Resolved
 		t:         t,
 		transport: newFakeTransport(),
 		clusters:  newStubClusters(clusterNames...),
-		recorder:  events.NewFakeRecorder(200),
+		recorder:  record.NewFakeRecorder(200),
 	}
 
 	f.ns = uniqueName("eng-test")
