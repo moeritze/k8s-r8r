@@ -59,23 +59,64 @@ equal fleet-admin compromise. Instead:
    kubeconfig (`<cluster>-kubeconfig` Secret) with an **uncached read**
    and uses it **exactly once per bootstrap** to create on the spoke:
    the `k8s-r8r-system` namespace, the `k8s-r8r` ServiceAccount, the
-   `k8s-r8r-replicator` ClusterRole (verbs on exactly the allowlisted
-   resource kinds, plus `get`/`create`/`patch` on namespaces
-   (namespace-ensure uses server-side apply) — never delete),
-   its binding, and a namespaced Role that lets the SA mint its own
-   tokens.
+   `k8s-r8r-replicator` ClusterRole, its binding, and a namespaced Role
+   that lets the SA mint its own tokens.
 2. All steady-state traffic authenticates with **short-lived, rotated SA
    tokens**; the spoke rest config carries no static credential at all
    (every request is re-signed with a currently valid token). Token
    renewal authenticates as the SA itself, not the admin credential.
 3. Spoke RBAC is **re-narrowed** when the configured kind allowlist
-   shrinks.
+   shrinks: the ClusterRole rules are replaced wholesale at bootstrap,
+   and changing `--allowed-kinds` restarts the operator, which
+   re-bootstraps every discovered cluster at the smaller scope.
 
-Result: hub compromise blast radius drops from "fleet admin" to "write
-allowlisted kinds in spoke namespaces" — still serious, but bounded and
-auditable. Known v1 limitation (documented in the code): the spoke grant
-is a ClusterRole, so it applies in all namespaces of the spoke;
-per-namespace narrowing is a planned refinement.
+### What the spoke grant actually is
+
+Be precise about this, because it sizes everything else. The
+`k8s-r8r-replicator` ClusterRole grants, on **each kind in
+`--allowed-kinds`** (default `secrets,configmaps`):
+
+```
+get, list, watch, create, update, patch, delete
+```
+
+plus `get`/`create`/`patch` on namespaces (namespace-ensure uses
+server-side apply, whose create-on-PATCH path needs both — never
+delete). There are no `resourceNames`, and it is bound with a
+**ClusterRoleBinding**, so those verbs apply in **every namespace** of
+the spoke. The `app.kubernetes.io/managed-by` label selector on the
+operator's spoke caches narrows what k8s-r8r *watches*; it is a cache
+filter, not an authorization boundary.
+
+Two narrowings the design intends are **not implemented yet**:
+
+- **Scope is not derived from policy.** It comes from the operator's
+  `--allowed-kinds` flag, never from your `ReplicationPolicy` objects.
+  A hub whose only policy permits `Secret` still grants ConfigMap
+  `delete` on every spoke, and the grant is created when the operator
+  first discovers a cluster — before any policy exists.
+  ([#29](https://github.com/moeritze/k8s-r8r/issues/29))
+- **Scope is not per-namespace.** Per-namespace Roles instead of a
+  ClusterRole are a planned refinement.
+
+Result: hub compromise blast radius drops from "fleet admin" to
+"read/write/delete the allowlisted kinds in every namespace of every
+spoke, plus create namespaces". That is a real reduction — no node,
+workload, or RBAC control — but with `secrets` allowlisted it still
+means reading and deleting every Secret in `kube-system`,
+`cert-manager`, `argocd` and the like, so treat it as *narrower than*
+fleet admin rather than as bounded. Sizing note: this is not a privilege
+**escalation** — the hub already holds the CAPI admin kubeconfigs, so
+the SA grant reaches nothing a hub compromise could not already reach.
+What the gap defeats is the *reduction* D5 promises: the SA is meant to
+be a much smaller thing to fall back to, and today it is less small than
+the design intends. The reductions D5 does deliver in full — no static
+credential in the spoke rest config, short-lived rotated tokens, the
+admin kubeconfig touched once per bootstrap — are unaffected.
+
+Until policy-derived scoping lands, the operator lever that actually
+narrows spokes is `--allowed-kinds` (chart value `allowedKinds`): set it
+to the kinds you really replicate.
 
 Hub-side hardening that complements this: keep CAPI kubeconfig Secrets in
 an isolated namespace with tight RBAC — they are the crown jewels of a
@@ -188,3 +229,11 @@ does not.
   grade privilege; bind `k8s-r8r-policy-admin` accordingly.
 - Readers of replicas on target clusters — replicas are ordinary
   Secrets/ConfigMaps there; spoke-side RBAC governs who reads them.
+- Objects on a spoke that k8s-r8r never touches. The spoke SA's grant is
+  scoped to the *configured* kind allowlist across all namespaces, not to
+  what policy permits or to what has actually been replicated, so it can
+  read and delete allowlisted kinds anywhere on the spoke — including
+  namespaces no `ReplicationPolicy` names. Narrow `allowedKinds` to what
+  you replicate; policy-derived scoping is tracked in
+  [#29](https://github.com/moeritze/k8s-r8r/issues/29). See
+  [What the spoke grant actually is](#what-the-spoke-grant-actually-is).
