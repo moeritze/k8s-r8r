@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -160,7 +160,13 @@ type Reconciler struct {
 	// Scheme is the hub scheme.
 	Scheme *runtime.Scheme
 	// Recorder emits events on Replication objects; nil disables events.
-	Recorder events.EventRecorder
+	//
+	// This is deliberately the core/v1 recorder (client-go tools/record, i.e.
+	// manager.GetEventRecorderFor) and not the events.k8s.io one: only the
+	// core recorder populates firstTimestamp/lastTimestamp/count, which the
+	// universal `kubectl get events --sort-by=.lastTimestamp` idiom needs
+	// (issue #32).
+	Recorder record.EventRecorder
 	// Transport moves replicas to and from target clusters.
 	Transport Transport
 	// Clusters resolves discovery inventory (labels + gone detection).
@@ -849,7 +855,7 @@ func (r *Reconciler) event(rep *r8rv1alpha1.Replication, eventType, reason, mess
 	if r.limiter != nil && !r.limiter.Allow(string(rep.UID), reason, message) {
 		return
 	}
-	r.Recorder.Eventf(rep, nil, eventType, reason, "Reconcile", "%s", message)
+	r.Recorder.Eventf(rep, eventType, reason, "%s", message)
 }
 
 // emitTransitionEvents turns Ready-condition transitions into lifecycle
