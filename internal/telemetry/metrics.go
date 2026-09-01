@@ -93,6 +93,15 @@ var (
 		Help: "Spoke informer events on managed replicas that triggered a reconcile (drift candidates, including the engine's own apply echoes), labeled by target cluster.",
 	}, []string{labelCluster})
 
+	// driftCorrections counts replicas whose diverged *content* the engine
+	// actually rewrote. Unlike driftEvents (watch traffic, apply echoes
+	// included) this only fires when a replica's payload hash did not match
+	// its source, so a non-zero rate means real corrective writes happened.
+	driftCorrections = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "k8s_r8r_drift_corrections_total",
+		Help: "Replicas whose diverged content the engine rewrote to match the source (payload hash mismatch, not informer traffic), labeled by target cluster.",
+	}, []string{labelCluster})
+
 	// spokeBootstraps counts spoke bootstrap attempts by result.
 	spokeBootstraps = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "k8s_r8r_spoke_bootstraps_total",
@@ -120,6 +129,11 @@ func IncRevocation(action string) { revocations.WithLabelValues(action).Inc() }
 
 // IncDriftEvent records one drift-candidate informer event for a cluster.
 func IncDriftEvent(cluster string) { driftEvents.WithLabelValues(cluster).Inc() }
+
+// IncDriftCorrection records one replica whose diverged content the engine
+// rewrote on a target cluster. Call it only for real payload divergence, not
+// for repairs of the engine's own bookkeeping annotation.
+func IncDriftCorrection(cluster string) { driftCorrections.WithLabelValues(cluster).Inc() }
 
 // IncSpokeBootstrap records one spoke bootstrap attempt.
 func IncSpokeBootstrap(success bool) { spokeBootstraps.WithLabelValues(resultLabel(success)).Inc() }
@@ -372,6 +386,7 @@ func init() {
 		conflicts,
 		revocations,
 		driftEvents,
+		driftCorrections,
 		spokeBootstraps,
 		tokenRotations,
 		replicas,

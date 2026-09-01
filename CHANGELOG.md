@@ -17,8 +17,28 @@ release; they are called out under **Changed** or **Removed**.
   Comma-separated and repeatable; a trailing `/` makes an entry a prefix
   match. Additive only — built-in entries cannot be removed.
 
+- **`k8s_r8r_drift_corrections_total{cluster}`** counts replicas whose
+  diverged content the engine rewrote. Distinct from the pre-existing
+  `k8s_r8r_drift_events_total`, which counts spoke informer traffic (the
+  operator's own apply echoes included) and therefore rises on ordinary
+  source updates.
+
 ### Fixed
 
+- **Drift correction is now observable**
+  ([#30](https://github.com/moeritze/k8s-r8r/issues/30)). When a replica's
+  content is rewritten on a spoke, the engine emits a `DriftCorrected`
+  Warning event on the `Replication` — naming the replica's
+  cluster/namespace/name and the observed and expected `sha256:` hashes — and
+  increments `k8s_r8r_drift_corrections_total`. Previously the corrective
+  write was indistinguishable from a no-op reconcile, so repeated tampering
+  with a replicated Secret, or a second replicator fighting for the same
+  object, produced no output at all. Events coalesce for five minutes per
+  identical (object, reason, message), so read the *rate* of recurring drift
+  off the metric, which is not rate-limited. A stale `r8r.io/source-hash`
+  annotation over unchanged content is repaired silently — it is a
+  bookkeeping repair, not drift, and it is what a change to the hashing rules
+  produces fleet-wide on upgrade.
 - **Replicas no longer inherit foreign ownership or replication metadata**
   ([#26](https://github.com/moeritze/k8s-r8r/issues/26)). The engine now
   strips `replicator.v1.mittwald.de/*`,
