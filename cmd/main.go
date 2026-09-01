@@ -510,10 +510,15 @@ func main() {
 	// Replication engine: pushes replicas through SA-token clients from the
 	// cluster runtime manager and hooks its lifecycle events for drift
 	// informers and re-enqueues.
+	// Deliberately the core/v1 recorder, not the (newer) events.k8s.io one:
+	// only this recorder populates firstTimestamp/lastTimestamp/count, which
+	// `kubectl get events --sort-by=.lastTimestamp` needs (issue #32).
+	//nolint:staticcheck // SA1019: deliberate; GetEventRecorder omits the legacy timestamps.
+	engineRecorder := mgr.GetEventRecorderFor("replication-engine")
 	engineReconciler := &engine.Reconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
-		Recorder:      mgr.GetEventRecorder("replication-engine"),
+		Recorder:      engineRecorder,
 		Transport:     engine.NewPushTransport(clusterManager, "k8s-r8r"),
 		Clusters:      engine.ProviderInventory{Provider: provider},
 		ClusterEvents: clusterManager,
