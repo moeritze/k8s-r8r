@@ -1,8 +1,21 @@
 k8s-r8r {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
 
-Nothing replicates yet: the policy universe is default-deny. Create a
-ReplicationPolicy (see docs/policies.md), then annotate a Secret or
-ConfigMap:
+Nothing replicates yet: the policy universe is default-deny.
+
+But installing is not a no-op on your fleet. As soon as a discovered
+cluster reports control-plane-ready, the operator uses its provider admin
+kubeconfig once to bootstrap credentials there — a k8s-r8r-system
+namespace, a k8s-r8r ServiceAccount, and a ClusterRole granting
+get/list/watch/create/update/patch/delete on {{ join ", " .Values.allowedKinds }}
+in every namespace of that cluster. This happens before any policy
+exists, and the grant follows --allowed-kinds, not your policies. Set
+allowedKinds to the kinds you actually replicate, and read
+docs/security.md before pointing this at production.
+
+  kubectl get clusterrole k8s-r8r-replicator -o yaml   # on a spoke
+
+To start replicating, create a ReplicationPolicy (see docs/policies.md),
+then annotate a Secret or ConfigMap:
 
   kubectl annotate secret my-secret \
     r8r.io/replicate="true" \
