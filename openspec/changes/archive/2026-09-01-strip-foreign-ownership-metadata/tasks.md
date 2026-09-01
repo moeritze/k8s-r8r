@@ -41,5 +41,7 @@
 
 ## 5. Verification
 
-- [ ] 5.1 `make lint && make test`.
-- [ ] 5.2 `make test-e2e` if docker is available.
+- [x] 5.1 `make lint && make test` — green on PR #40 (CI `Lint` and
+      `Unit tests + envtest` jobs).
+- [x] 5.2 `make test-e2e` — green on PR #40 (CI `E2E (kind fleet, hub + 2
+      spokes)` job).
