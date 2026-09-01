@@ -17,6 +17,7 @@ limitations under the License.
 package request
 
 import (
+	"slices"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -91,6 +92,24 @@ func eventsFor(ns, name string) func() []string {
 			}
 		}
 		return reasons
+	}
+}
+
+// operatorEventsFor returns the full Event objects recorded for the named
+// object, so tests can assert on more than the reason.
+func operatorEventsFor(ns, name string) func() []corev1.Event {
+	return func() []corev1.Event {
+		var list corev1.EventList
+		if err := k8sClient.List(ctx, &list, client.InNamespace(ns)); err != nil {
+			return nil
+		}
+		var out []corev1.Event
+		for _, e := range list.Items {
+			if e.InvolvedObject.Name == name {
+				out = append(out, e)
+			}
+		}
+		return out
 	}
 }
 
@@ -337,6 +356,56 @@ var _ = Describe("Request controller", func() {
 			Expect(k8sClient.Create(ctx, sec)).To(Succeed())
 			Eventually(eventsFor(ns, "broken"), timeout, interval).
 				Should(ContainElement(EventReasonInvalidAnnotations))
+		})
+	})
+
+	// Regression guard for issue #32: events recorded through the
+	// events.k8s.io/v1 recorder populate only eventTime, leaving
+	// firstTimestamp/lastTimestamp/count null after the API server's
+	// eventsv1 -> corev1 conversion. `kubectl get events
+	// --sort-by=.lastTimestamp` — the near-universal idiom — then sorts on a
+	// null key and returns an arbitrary order, which actively misleads
+	// whoever is reading the event log while debugging.
+	Context("event timestamps", func() {
+		It("populates lastTimestamp/firstTimestamp/count so --sort-by=.lastTimestamp orders correctly", func() {
+			sa := &corev1.ServiceAccount{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: ns, Name: "timestamped-sa",
+					Annotations: map[string]string{
+						annotations.KeyReplicate:      annotations.ValueTrue,
+						annotations.KeyTargetClusters: selectorProd,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, sa)).To(Succeed())
+
+			var evs []corev1.Event
+			Eventually(func(g Gomega) {
+				evs = operatorEventsFor(ns, "timestamped-sa")()
+				g.Expect(evs).NotTo(BeEmpty())
+			}, timeout, interval).Should(Succeed())
+
+			for _, e := range evs {
+				Expect(e.LastTimestamp.IsZero()).To(BeFalse(),
+					"event %s/%s has a null lastTimestamp; --sort-by=.lastTimestamp would misorder it",
+					e.Reason, e.Name)
+				Expect(e.FirstTimestamp.IsZero()).To(BeFalse(),
+					"event %s/%s has a null firstTimestamp", e.Reason, e.Name)
+				Expect(e.Count).To(BeNumerically(">=", 1),
+					"event %s/%s has a null count", e.Reason, e.Name)
+				Expect(e.LastTimestamp.Time).NotTo(BeTemporally("<", e.FirstTimestamp.Time))
+			}
+
+			// The sort key is not merely non-null but usable: sorting the
+			// recorded events by lastTimestamp yields a total, stable order.
+			sorted := slices.Clone(evs)
+			slices.SortFunc(sorted, func(a, b corev1.Event) int {
+				return a.LastTimestamp.Compare(b.LastTimestamp.Time)
+			})
+			for i := 1; i < len(sorted); i++ {
+				Expect(sorted[i-1].LastTimestamp.Time).
+					NotTo(BeTemporally(">", sorted[i].LastTimestamp.Time))
+			}
 		})
 	})
 
