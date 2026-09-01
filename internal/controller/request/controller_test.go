@@ -231,8 +231,22 @@ var _ = Describe("Request controller", func() {
 			}, timeout, interval).Should(Succeed())
 			Expect(rep.Spec.Origin).To(Equal(r8rv1alpha1.ReplicationOriginAnnotation))
 			Expect(rep.Spec.ResolvedTargets).To(BeEmpty())
+			// Ready belongs to the engine and is never written here.
 			Expect(meta.FindStatusCondition(rep.Status.Conditions,
 				r8rv1alpha1.ReplicationConditionReady)).To(BeNil())
+			// ...but "requested replication, resolved nothing" is reported:
+			// with no denial there is no denial event either, so this
+			// condition is the only durable signal (issue #27).
+			Eventually(func(g Gomega) {
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Namespace: ns, Name: ReplicationName("ConfigMap", "app-config"),
+				}, rep)).To(Succeed())
+				cond := meta.FindStatusCondition(rep.Status.Conditions,
+					r8rv1alpha1.ReplicationConditionTargetsResolved)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(r8rv1alpha1.ReasonNoTargets))
+			}, timeout, interval).Should(Succeed())
 		})
 	})
 
@@ -253,13 +267,18 @@ var _ = Describe("Request controller", func() {
 					Namespace: ns, Name: ReplicationName(kindSecret, "denied"),
 				}, rep)).To(Succeed())
 				cond := meta.FindStatusCondition(rep.Status.Conditions,
-					r8rv1alpha1.ReplicationConditionReady)
+					r8rv1alpha1.ReplicationConditionTargetsResolved)
 				g.Expect(cond).NotTo(BeNil())
 				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 				g.Expect(cond.Reason).To(Equal(r8rv1alpha1.ReasonPolicyDenied))
 				g.Expect(cond.Message).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
 			Expect(rep.Spec.ResolvedTargets).To(BeEmpty())
+			// The denial is reported on TargetsResolved, never on Ready: the
+			// engine owns Ready, and a second writer would be clobbered by it
+			// (issue #27).
+			Expect(meta.FindStatusCondition(rep.Status.Conditions,
+				r8rv1alpha1.ReplicationConditionReady)).To(BeNil())
 
 			// Event on the source names the denied dimension via the policy
 			// decision reason.
@@ -267,7 +286,7 @@ var _ = Describe("Request controller", func() {
 				Should(ContainElement(EventReasonPolicyDenied))
 		})
 
-		It("lifts the PolicyDenied condition once a policy permits the request", func() {
+		It("flips TargetsResolved to True once a policy permits the request", func() {
 			inventory.set(readyCluster(spokeA, prodLabels()))
 			sec := annotatedSecret(ns, "late-allow", map[string]string{
 				annotations.KeyReplicate:      annotations.ValueTrue,
@@ -280,7 +299,7 @@ var _ = Describe("Request controller", func() {
 				rep := &r8rv1alpha1.Replication{}
 				g.Expect(k8sClient.Get(ctx, key, rep)).To(Succeed())
 				g.Expect(meta.IsStatusConditionFalse(rep.Status.Conditions,
-					r8rv1alpha1.ReplicationConditionReady)).To(BeTrue())
+					r8rv1alpha1.ReplicationConditionTargetsResolved)).To(BeTrue())
 			}, timeout, interval).Should(Succeed())
 
 			// Creating a policy retriggers resolution via the policy watch.
@@ -289,6 +308,12 @@ var _ = Describe("Request controller", func() {
 				rep := &r8rv1alpha1.Replication{}
 				g.Expect(k8sClient.Get(ctx, key, rep)).To(Succeed())
 				g.Expect(rep.Spec.ResolvedTargets).To(HaveLen(1))
+				cond := meta.FindStatusCondition(rep.Status.Conditions,
+					r8rv1alpha1.ReplicationConditionTargetsResolved)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+				g.Expect(cond.Reason).To(Equal(r8rv1alpha1.ReasonTargetsResolved))
+				// Still never written by this controller.
 				g.Expect(meta.FindStatusCondition(rep.Status.Conditions,
 					r8rv1alpha1.ReplicationConditionReady)).To(BeNil())
 			}, timeout, interval).Should(Succeed())

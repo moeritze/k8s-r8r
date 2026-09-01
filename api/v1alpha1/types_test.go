@@ -155,10 +155,13 @@ func TestEnumValues(t *testing.T) {
 		{string(RevocationPolicyRetain), "Retain"},
 		{string(RevocationPolicyDelete), "Delete"},
 		{ReplicationConditionReady, "Ready"},
+		{ReplicationConditionTargetsResolved, "TargetsResolved"},
 		{ReasonPolicyDenied, "PolicyDenied"},
 		{ReasonPolicyRevoked, "PolicyRevoked"},
 		{ReasonNotAuthoritative, "NotAuthoritative"},
 		{ReasonConflict, "Conflict"},
+		{ReasonNoTargets, "NoTargets"},
+		{ReasonTargetsResolved, "TargetsResolved"},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
