@@ -33,4 +33,4 @@
 - [x] 5.1 `openspec validate negotiate-capi-cluster-version --strict`
 - [x] 5.2 `make lint && make test`
 - [x] 5.3 Add `TestCAPIVersionNegotiation` asserting the operator logged the negotiated `v1beta2`; `go vet -tags e2e ./test/e2e/...` compiles
-- [ ] 5.4 **Not run:** `make test-e2e` — the Docker daemon was unavailable in this environment. The e2e suite compiles and the negotiation assertion is in place; it needs a run on a machine with docker before merge.
+- [x] 5.4 `make test-e2e` — not runnable locally (no Docker daemon in the authoring environment), so it ran in CI on PR #41 instead: the `E2E (kind fleet, hub + 2 spokes)` job passed, including `TestCAPIVersionNegotiation`.
