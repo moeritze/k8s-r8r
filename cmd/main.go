@@ -456,6 +456,18 @@ func main() {
 	wirer := newSpokeWirer(ctx, mgr.GetAPIReader(), clusterManager, rbacScope)
 	provider.Subscribe(wirer.Handle)
 
+	// Discovery-health metrics, sourced from the provider itself at scrape
+	// time. k8s_r8r_clusters counts registered *runtimes* and reads 0 both
+	// when discovery is broken and when the fleet is empty;
+	// k8s_r8r_discovery_up separates the two.
+	telemetry.SetDiscoverySnapshot(func() telemetry.DiscoveryState {
+		return telemetry.DiscoveryState{
+			Provider: provider.Name(),
+			Up:       provider.Watching(),
+			Clusters: len(provider.List()),
+		}
+	})
+
 	// Cluster connectivity + runtime-count metrics, sourced from the
 	// runtime manager's snapshot at scrape time (0 unreachable, 1 degraded,
 	// 2 reachable).

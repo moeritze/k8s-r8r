@@ -8,10 +8,26 @@ Pluggable provider interface turns fleet-management systems into replication tar
 
 ## ClusterAPI provider (v1)
 
-`internal/discovery/capi` watches `cluster.x-k8s.io/v1beta1 Cluster` objects **unstructured** (no CAPI module dependency — keeps go.mod lean, decouples from CAPI's k8s version pins):
+`internal/discovery/capi` watches `cluster.x-k8s.io Cluster` objects **unstructured** (no CAPI module dependency — keeps go.mod lean, decouples from CAPI's k8s version pins):
 - selection labels = the `Cluster` object's labels (used by [[replication-flow|`r8r.io/target-clusters`]] and [[policy-model|policy `clusterSelector`]])
 - targetable only when control plane ready (`ControlPlaneReady` v1beta1 / `ControlPlaneAvailable` v1beta2)
 - credentials from the conventional `<cluster>-kubeconfig` Secret
+
+## API version negotiation
+
+The watched version is **not pinned**. On start the provider asks the hub's discovery API which versions of `clusters.cluster.x-k8s.io` are served and takes the first of `v1 → v1beta2 → v1beta1` that appears, logging the choice once:
+
+```
+Negotiated ClusterAPI discovery version  groupVersion=cluster.x-k8s.io/v1beta2 resource=clusters
+```
+
+The list is explicit rather than the group's `preferredVersion`, so the provider never binds to a CAPI version whose readiness-condition vocabulary it has not been validated against. Nothing else in the provider is version-bound: records read `ObjectMeta` plus `status.conditions[].type/.status`, identical in both condition sets.
+
+Failure modes, deliberately different:
+- **served, but at no supported version** (CAPI 1.16 drops `v1beta1` and this build is older) → the provider **fails to start** with `capi: clusters.cluster.x-k8s.io serves none of [v1 v1beta2 v1beta1] (served: [...])`. The manager stops and the pod restarts with the reason in its logs. Readiness is untouched — that gate is still hub-informers-only.
+- **not served at all / hub unreachable** → retries every 30s, logs why, and reports `k8s_r8r_discovery_up=0` (see [[operations]]). ClusterAPI installed after the operator converges on its own.
+
+Before this, the GVR was pinned to `v1beta1`: an unserved version returned 404, the reflector retried forever, `Start` hung in `WaitForCacheSync`, the pod stayed Ready, and the fleet looked empty. Issue #28.
 
 ## Credential bootstrap (D5)
 

@@ -6,7 +6,29 @@ tags: [functionality, operations]
 
 ## Metrics (`internal/telemetry`, prefix `k8s_r8r_`)
 
-Replica desired/ready/failed gauges (per cluster) · policy/webhook denial counters (per dimension) · conflict, revocation, drift counters · cluster connectivity gauge (0 unreachable / 1 degraded / 2 reachable) · bootstrap + token rotation counters. Reconcile durations/workqueue depth come from controller-runtime built-ins. Cardinality bounded by test: labels only cluster/namespace/kind — never object names.
+Replica desired/ready/failed gauges (per cluster) · policy/webhook denial counters (per dimension) · conflict, revocation, drift counters · cluster connectivity gauge (0 unreachable / 1 degraded / 2 reachable) · bootstrap + token rotation counters. Reconcile durations/workqueue depth come from controller-runtime built-ins. Cardinality bounded by test: labels only cluster/namespace/kind/provider — never object names.
+
+**Discovery health** (`k8s_r8r_discovery_up{provider}`, `k8s_r8r_discovery_clusters{provider}`) comes from the [[cluster-discovery|provider itself]], not from the runtime manager. `k8s_r8r_clusters` counts registered *runtimes* and reads 0 both when discovery is broken and when the fleet is genuinely empty — that ambiguity is what kept a total discovery outage invisible (#28). Read them together:
+
+| `discovery_up` | `discovery_clusters` | meaning |
+|---|---|---|
+| 1 | 0 | discovery works, no clusters match |
+| 1 | n | healthy |
+| 0 | 0 | discovery is not running — alert on this |
+
+## Troubleshooting
+
+**Zero clusters discovered.** First check `k8s_r8r_discovery_up`. If it is 1, the fleet really has no `Cluster` objects (or none the provider's namespace setting sees) — this is not an operator fault. If it is 0, check the negotiated CAPI version in the operator log:
+
+```sh
+kubectl -n k8s-r8r-system logs deploy/k8s-r8r | grep -i 'ClusterAPI'
+```
+
+- `Negotiated ClusterAPI discovery version groupVersion=... ` — discovery started fine; look further downstream.
+- `capi: clusters.cluster.x-k8s.io serves none of [v1 v1beta2 v1beta1] (served: [...])` — the hub's CAPI is newer (or older) than this build supports; the pod restarts on this. Upgrade k8s-r8r to a build that lists a served version.
+- `ClusterAPI inventory unavailable, retrying` — no `clusters.cluster.x-k8s.io` on the hub at all (ClusterAPI not installed) or the hub is unreachable. The operator waits and converges once it appears.
+
+Note the pod stays **Ready** through all of these: readiness reflects hub informer sync only, by design. Discovery health lives in the metric, not in the probe.
 
 ## Events
 

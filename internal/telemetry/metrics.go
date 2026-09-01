@@ -20,8 +20,8 @@ limitations under the License.
 // # Cardinality rule
 //
 // Metric labels are BOUNDED: only cluster, namespace, kind, and small
-// enumerations (dimension, policy, action, result) may appear as label
-// values — never object names or any other unbounded identifier. Object
+// enumerations (dimension, policy, action, result, provider) may appear as
+// label values — never object names or any other unbounded identifier. Object
 // names belong in events, not metrics. A unit test walks every registered
 // k8s_r8r_* metric and enforces this.
 //
@@ -51,6 +51,10 @@ const (
 	labelPolicy    = "policy"
 	labelAction    = "action"
 	labelResult    = "result"
+	// labelProvider is the discovery provider's registry name
+	// ("cluster-api", ...) — a closed set with exactly one value per
+	// process.
+	labelProvider = "provider"
 )
 
 var (
@@ -290,6 +294,77 @@ func (c *clusterCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
+// DiscoveryState is the discovery provider's own health snapshot: whether
+// its inventory watch is established, and how many clusters it currently
+// knows about.
+//
+// This is deliberately separate from k8s_r8r_clusters, which counts
+// *runtimes* registered with the cluster manager — three layers downstream
+// of discovery, and therefore 0 both when discovery is structurally broken
+// and when the fleet is genuinely empty. Up distinguishes the two.
+type DiscoveryState struct {
+	// Provider is the discovery provider's registry name (bounded label).
+	Provider string
+	// Up reports whether the provider's inventory watch is established.
+	Up bool
+	// Clusters is the size of the provider's own inventory (List()).
+	Clusters int
+}
+
+// discoveryCollector renders the discovery provider's health snapshot as
+// gauges at scrape time. The source is injected (SetDiscoverySnapshot) to
+// keep this package free of internal dependencies, exactly like
+// SetClusterSnapshot.
+type discoveryCollector struct {
+	upDesc       *prometheus.Desc
+	clustersDesc *prometheus.Desc
+}
+
+var discoverySource struct {
+	mu sync.Mutex
+	fn func() DiscoveryState
+}
+
+// SetDiscoverySnapshot wires the discovery-health source: a function
+// returning the configured provider's name, watch state, and inventory size.
+func SetDiscoverySnapshot(fn func() DiscoveryState) {
+	discoverySource.mu.Lock()
+	defer discoverySource.mu.Unlock()
+	discoverySource.fn = fn
+}
+
+func newDiscoveryCollector() *discoveryCollector {
+	return &discoveryCollector{
+		upDesc: prometheus.NewDesc("k8s_r8r_discovery_up",
+			"1 when the configured discovery provider's inventory watch is established, 0 otherwise. Distinguishes broken discovery from an empty fleet.", []string{labelProvider}, nil),
+		clustersDesc: prometheus.NewDesc("k8s_r8r_discovery_clusters",
+			"Number of clusters in the discovery provider's own inventory (distinct from k8s_r8r_clusters, which counts registered runtimes).", []string{labelProvider}, nil),
+	}
+}
+
+// Describe implements prometheus.Collector.
+func (c *discoveryCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- c.upDesc
+	ch <- c.clustersDesc
+}
+
+// Collect implements prometheus.Collector.
+func (c *discoveryCollector) Collect(ch chan<- prometheus.Metric) {
+	discoverySource.mu.Lock()
+	fn := discoverySource.fn
+	discoverySource.mu.Unlock()
+	if fn == nil {
+		return
+	}
+	s := fn()
+	up := 0.0
+	if s.Up {
+		up = 1
+	}
+	ch <- prometheus.MustNewConstMetric(c.upDesc, prometheus.GaugeValue, up, s.Provider)
+	ch <- prometheus.MustNewConstMetric(c.clustersDesc, prometheus.GaugeValue, float64(s.Clusters), s.Provider)
+}
+
 func init() {
 	metrics.Registry.MustRegister(
 		policyDenials,
@@ -301,5 +376,6 @@ func init() {
 		tokenRotations,
 		replicas,
 		newClusterCollector(),
+		newDiscoveryCollector(),
 	)
 }

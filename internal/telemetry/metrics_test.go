@@ -44,6 +44,9 @@ func exerciseAll() {
 	SetClusterSnapshot(func() map[string]float64 {
 		return map[string]float64{"spoke-a": ConnectivityReachable}
 	})
+	SetDiscoverySnapshot(func() DiscoveryState {
+		return DiscoveryState{Provider: "cluster-api", Up: true, Clusters: 1}
+	})
 }
 
 func gatherOurs(t *testing.T) map[string]*dto.MetricFamily {
@@ -76,6 +79,8 @@ func TestMetricLabelCardinalityBounded(t *testing.T) {
 		"policy":    true,
 		"action":    true,
 		"result":    true,
+		// The discovery provider's registry name: one value per process.
+		"provider": true,
 	}
 	fams := gatherOurs(t)
 	if len(fams) == 0 {
@@ -109,6 +114,8 @@ func TestMetricInventoryComplete(t *testing.T) {
 		"k8s_r8r_drift_events_total",
 		"k8s_r8r_cluster_connectivity",
 		"k8s_r8r_clusters",
+		"k8s_r8r_discovery_up",
+		"k8s_r8r_discovery_clusters",
 		"k8s_r8r_spoke_bootstraps_total",
 		"k8s_r8r_token_rotations_total",
 	} {
@@ -154,6 +161,51 @@ func replicaValue(t *testing.T, family string) float64 {
 			}
 		}
 	}
+	return 0
+}
+
+// A broken discovery provider and a genuinely empty fleet must not produce
+// the same observation: both show zero clusters, only the up gauge separates
+// them (observability-operations: discovery health).
+func TestDiscoveryHealthDistinguishesBrokenFromEmpty(t *testing.T) {
+	t.Cleanup(func() {
+		SetDiscoverySnapshot(func() DiscoveryState {
+			return DiscoveryState{Provider: "cluster-api", Up: true, Clusters: 1}
+		})
+	})
+
+	SetDiscoverySnapshot(func() DiscoveryState {
+		return DiscoveryState{Provider: "cluster-api", Up: true, Clusters: 0}
+	})
+	if got := discoveryValue(t, "k8s_r8r_discovery_up"); got != 1 {
+		t.Errorf("empty fleet: up = %v, want 1", got)
+	}
+	if got := discoveryValue(t, "k8s_r8r_discovery_clusters"); got != 0 {
+		t.Errorf("empty fleet: clusters = %v, want 0", got)
+	}
+
+	SetDiscoverySnapshot(func() DiscoveryState {
+		return DiscoveryState{Provider: "cluster-api", Up: false, Clusters: 0}
+	})
+	if got := discoveryValue(t, "k8s_r8r_discovery_up"); got != 0 {
+		t.Errorf("broken provider: up = %v, want 0", got)
+	}
+}
+
+func discoveryValue(t *testing.T, family string) float64 {
+	t.Helper()
+	mf, ok := gatherOurs(t)[family]
+	if !ok {
+		t.Fatalf("family %s not found", family)
+	}
+	for _, m := range mf.GetMetric() {
+		for _, lp := range m.GetLabel() {
+			if lp.GetName() == "provider" && lp.GetValue() == "cluster-api" {
+				return m.GetGauge().GetValue()
+			}
+		}
+	}
+	t.Fatalf("family %s has no cluster-api sample", family)
 	return 0
 }
 

@@ -59,6 +59,26 @@ demonstrates the entire hub-side flow — request materialization, the
 default-deny policy decision, and status/events — with the target list
 resolving to zero clusters.
 
+> **Troubleshooting — zero clusters discovered.** The operator does not pin
+> a CAPI API version: it negotiates one of `v1`, `v1beta2`, `v1beta1` from
+> the hub's discovery API at startup and logs the result. If nothing
+> replicates and target lists are empty, check the negotiated version first:
+>
+> ```sh
+> kubectl -n k8s-r8r-system logs deploy/k8s-r8r | grep -i 'ClusterAPI'
+> ```
+>
+> `Negotiated ClusterAPI discovery version groupVersion=...` means discovery
+> is fine. `ClusterAPI inventory unavailable, retrying` means the hub has no
+> `clusters.cluster.x-k8s.io` (the expected state on a bare kind fleet, as
+> above) — the operator waits and picks it up when ClusterAPI is installed.
+> `serves none of [...]` means the hub's CAPI serves only versions this build
+> does not support; the pod restarts with that message until you upgrade.
+> The `k8s_r8r_discovery_up` metric carries the same signal: `0` means
+> discovery is not running, `1` with `k8s_r8r_discovery_clusters=0` means a
+> genuinely empty fleet. Note the pod stays **Ready** in all these cases —
+> readiness reflects hub informer sync only, by design.
+
 ## 2. Build and install the operator on the hub
 
 ```sh

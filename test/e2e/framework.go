@@ -25,7 +25,9 @@ limitations under the License.
 //
 // The suite never installs ClusterAPI. The discovery provider reads Cluster
 // objects unstructured, so testdata/capi-cluster-crd.yaml provides a minimal
-// clusters.cluster.x-k8s.io CRD; per spoke the suite creates a Cluster object
+// clusters.cluster.x-k8s.io CRD serving both v1beta2 (storage) and the
+// deprecated v1beta1, so the provider's version negotiation is exercised
+// rather than short-circuited; per spoke the suite creates a Cluster object
 // labeled env=e2e, patches ControlPlaneReady=True through the status
 // subresource, and writes the conventional "<name>-kubeconfig" Secret with an
 // INTERNAL kind kubeconfig (kind get kubeconfig --internal) under the "value"
@@ -88,8 +90,11 @@ const (
 // where the bootstrap creates the spoke artifacts.
 const operatorNamespace = "k8s-r8r-system"
 
-// clusterGVK identifies simulated ClusterAPI Cluster objects.
-var clusterGVK = schema.GroupVersionKind{Group: "cluster.x-k8s.io", Version: "v1beta1", Kind: "Cluster"}
+// clusterGVK identifies simulated ClusterAPI Cluster objects. The stand-in
+// CRD serves v1beta2 (storage) and the deprecated v1beta1, so the operator's
+// discovery provider has a real negotiation to perform (issue #28) and must
+// land on v1beta2; the suite writes at the storage version.
+var clusterGVK = schema.GroupVersionKind{Group: "cluster.x-k8s.io", Version: "v1beta2", Kind: "Cluster"}
 
 // Global harness state, initialized by TestMain.
 var (

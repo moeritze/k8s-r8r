@@ -1,10 +1,18 @@
-# Minimal stand-in for the ClusterAPI Cluster CRD (cluster.x-k8s.io/v1beta1).
+# Minimal stand-in for the ClusterAPI Cluster CRD.
 #
 # The k8s-r8r ClusterAPI discovery provider deliberately reads Cluster
 # objects unstructured (no CAPI import), so the e2e suite does not install
 # ClusterAPI at all: this CRD provides just enough surface for the provider —
 # metadata labels, status.conditions via the status subresource, and the
 # <name>-kubeconfig Secret convention (created by the suite).
+#
+# Two versions are served on purpose. The provider negotiates the version to
+# watch from the discovery API (issue #28), and a CRD serving only v1beta1
+# would make that negotiation a no-op in e2e. This mirrors a CAPI 1.11+
+# management cluster: v1beta2 served and storage, v1beta1 still served but
+# deprecated. The operator must pick v1beta2. Both versions use
+# x-kubernetes-preserve-unknown-fields with the default "None" conversion
+# strategy, so no conversion webhook is involved.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -20,9 +28,27 @@ spec:
     singular: cluster
   scope: Namespaced
   versions:
-    - name: v1beta1
+    - name: v1beta2
       served: true
       storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+    - name: v1beta1
+      served: true
+      storage: false
+      deprecated: true
+      deprecationWarning: "cluster.x-k8s.io/v1beta1 Cluster is deprecated; use cluster.x-k8s.io/v1beta2 Cluster"
       subresources:
         status: {}
       schema:

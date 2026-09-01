@@ -1,7 +1,29 @@
 // Package capi implements the ClusterAPI discovery provider.
 //
-// It watches ClusterAPI Cluster objects (cluster.x-k8s.io/v1beta1) on the hub
-// and translates them into discovery.ClusterRecords:
+// It watches ClusterAPI Cluster objects on the hub and translates them into
+// discovery.ClusterRecords.
+//
+// # API version negotiation
+//
+// The watched version is NOT pinned. On Start the provider asks the hub's
+// discovery API which versions of clusters.cluster.x-k8s.io are served and
+// picks the first entry of supportedClusterVersions ("v1", "v1beta2",
+// "v1beta1", most preferred first) that appears there, logging the choice
+// once. CAPI moved its storage version to v1beta2 and schedules v1beta1
+// unserved in 1.16; a pinned GVR would then wedge the informer in an endless
+// 404 retry and report an empty fleet. When the resource IS served but at no
+// supported version, the provider fails to start with an error naming the
+// group/resource and the versions the server does serve — a loud, named
+// failure instead of a silently empty inventory. When the resource is not
+// served at all (ClusterAPI not installed, or installed after the operator)
+// the provider retries instead, reporting itself as not watching so
+// k8s_r8r_discovery_up reads 0 while it waits.
+//
+// The explicit list is deliberate: the group's preferredVersion would
+// auto-adopt any future CAPI version, including one whose readiness
+// condition vocabulary this provider has never been validated against.
+//
+// Records are built as:
 //
 //   - Name: the Cluster object's metadata.name (stable for the object's
 //     lifetime). Fleets that run identically named Clusters in multiple
@@ -25,16 +47,21 @@ package capi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"sync"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8sdiscovery "k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/moeritze/k8s-r8r/internal/discovery"
 )
@@ -47,12 +74,31 @@ const ProviderName = "cluster-api"
 // Empty (the default) watches all namespaces.
 const SettingNamespace = "namespace"
 
-// clusterGVR identifies ClusterAPI Cluster objects.
-var clusterGVR = schema.GroupVersionResource{
+// clusterGroupResource identifies ClusterAPI Cluster objects; the version is
+// negotiated at Start (see resolveClusterGVR).
+var clusterGroupResource = schema.GroupResource{
 	Group:    "cluster.x-k8s.io",
-	Version:  "v1beta1",
 	Resource: "clusters",
 }
+
+// supportedClusterVersions are the cluster.x-k8s.io versions this provider is
+// validated against, most preferred first. The list is explicit rather than
+// derived from the group's preferredVersion so that the versions whose
+// readiness-condition vocabulary we understand (see readyConditionTypes) stay
+// an auditable constant: a future CAPI version is adopted by a reviewed
+// one-line change, never silently.
+var supportedClusterVersions = []string{"v1", "v1beta2", "v1beta1"}
+
+// cacheSyncTimeout bounds the initial informer sync. Without it a reflector
+// retrying a retryable error (a 404 on an unserved version, a missing RBAC
+// rule) blocks Start until process shutdown, turning a misconfiguration into
+// a silent hang.
+const cacheSyncTimeout = 2 * time.Minute
+
+// negotiateRetry is how long the provider waits before re-asking the
+// discovery API after a retryable failure (hub unreachable, ClusterAPI not
+// installed yet).
+const negotiateRetry = 30 * time.Second
 
 // kubeconfigSecretSuffix is the ClusterAPI convention for the admin
 // kubeconfig Secret name.
@@ -60,7 +106,13 @@ const kubeconfigSecretSuffix = "-kubeconfig"
 
 // readyConditionTypes are the condition types (any one with status "True")
 // that gate readiness: ControlPlaneReady is the v1beta1 condition,
-// ControlPlaneAvailable its v1beta2 successor surfaced on v1beta1 objects.
+// ControlPlaneAvailable its successor in the v1beta2 condition set. Both are
+// accepted because either can be what .status.conditions carries, depending
+// on the negotiated version and on which condition set the CAPI release
+// promotes there — which is what keeps readiness evaluation independent of
+// the version this provider negotiates. Both shapes expose "type" and
+// "status" as strings at the same path, so controlPlaneReady reads them
+// generically.
 var readyConditionTypes = map[string]struct{}{
 	"ControlPlaneReady":     {},
 	"ControlPlaneAvailable": {},
@@ -75,7 +127,17 @@ func init() {
 		if err != nil {
 			return nil, fmt.Errorf("capi: building dynamic client: %w", err)
 		}
-		return New(dyn, WithNamespace(o.Setting(SettingNamespace, ""))), nil
+		// The discovery client is built here but only *used* in Start:
+		// construction happens before the manager's lifecycle exists, so a
+		// hub that is briefly unreachable must not crash-loop the factory.
+		disco, err := k8sdiscovery.NewDiscoveryClientForConfig(o.HubConfig)
+		if err != nil {
+			return nil, fmt.Errorf("capi: building discovery client: %w", err)
+		}
+		return New(dyn,
+			WithDiscovery(disco),
+			WithNamespace(o.Setting(SettingNamespace, "")),
+		), nil
 	})
 }
 
@@ -92,9 +154,17 @@ func WithResync(d time.Duration) Option {
 	return func(p *Provider) { p.resync = d }
 }
 
+// WithDiscovery sets the discovery client used to negotiate the served
+// cluster.x-k8s.io version. It is required: Start fails without one rather
+// than falling back to a guessed version.
+func WithDiscovery(d k8sdiscovery.DiscoveryInterface) Option {
+	return func(p *Provider) { p.disco = d }
+}
+
 // Provider watches ClusterAPI Cluster objects and emits discovery events.
 type Provider struct {
 	dyn       dynamic.Interface
+	disco     k8sdiscovery.DiscoveryInterface
 	namespace string
 	resync    time.Duration
 
@@ -102,6 +172,11 @@ type Provider struct {
 	handlers []discovery.EventHandler
 	// records is keyed by "namespace/name" of the Cluster object.
 	records map[string]discovery.ClusterRecord
+	// watching reports whether the Cluster informer is established and
+	// synced. It is the source of the discovery-health gauge: it
+	// distinguishes "the provider is not running" from "the provider runs
+	// and the fleet is empty".
+	watching bool
 }
 
 // New builds a Provider on top of a dynamic client.
@@ -138,25 +213,197 @@ func (p *Provider) List() []discovery.ClusterRecord {
 	return out
 }
 
-// Start implements discovery.Provider. It runs the Cluster informer and
-// blocks until ctx is done.
+// Watching implements discovery.Provider: it reports whether the Cluster
+// informer is established and synced. It is the provider's own health
+// signal — false means discovery is not
+// running at all, which is what distinguishes a broken provider from a
+// genuinely empty fleet (both otherwise show zero clusters).
+func (p *Provider) Watching() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.watching
+}
+
+// Start implements discovery.Provider. It negotiates the served Cluster API
+// version, runs the Cluster informer, and blocks until ctx is done.
+//
+// Version negotiation happens here rather than at construction so a hub that
+// is unreachable at process start is retried through the manager's lifecycle
+// instead of crash-looping the factory. Two failure modes are deliberately
+// separated:
+//
+//   - The Cluster resource exists but serves no supported version. Start
+//     returns errUnsupportedVersions before the informer is created. As a
+//     manager Runnable that stops the manager and restarts the pod with the
+//     reason in its logs, which is the right answer to a structural
+//     incompatibility between this build and the hub that will not resolve
+//     itself. (This is unrelated to readiness, which stays hub-cache-only:
+//     one unreachable spoke must never make the operator unready, but an
+//     unusable inventory *source* is not one spoke.)
+//   - The Cluster resource is absent, or the hub is unreachable. Both may
+//     resolve on their own — ClusterAPI installed later, an API server
+//     restarting — so Start retries instead of failing, and reports itself
+//     as not watching (k8s_r8r_discovery_up == 0) with the reason logged
+//     while it waits.
 func (p *Provider) Start(ctx context.Context) error {
+	gvr, err := p.negotiate(ctx)
+	if err != nil {
+		return err
+	}
+	if gvr.Empty() {
+		// Stopped while waiting for the Cluster resource to appear.
+		return nil
+	}
+	log.FromContext(ctx).Info("Negotiated ClusterAPI discovery version",
+		"groupVersion", gvr.GroupVersion().String(), "resource", gvr.Resource)
+
 	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(p.dyn, p.resync, p.namespace, nil)
-	informer := factory.ForResource(clusterGVR).Informer()
-	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	informer := factory.ForResource(gvr).Informer()
+	if _, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    p.upsert,
 		UpdateFunc: func(_, newObj any) { p.upsert(newObj) },
 		DeleteFunc: p.remove,
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("capi: adding informer handler: %w", err)
 	}
 	factory.Start(ctx.Done())
-	if !cache.WaitForCacheSync(ctx.Done(), informer.HasSynced) {
-		return fmt.Errorf("capi: cluster informer cache never synced")
+
+	syncCtx, cancelSync := context.WithTimeout(ctx, cacheSyncTimeout)
+	defer cancelSync()
+	if !cache.WaitForCacheSync(syncCtx.Done(), informer.HasSynced) {
+		if ctx.Err() != nil {
+			// Shutdown during the initial sync is not a failure.
+			return nil
+		}
+		return fmt.Errorf("capi: %s informer cache never synced within %s",
+			gvr.GroupResource(), cacheSyncTimeout)
 	}
+
+	p.setWatching(true)
+	defer p.setWatching(false)
 	<-ctx.Done()
 	return nil
+}
+
+func (p *Provider) setWatching(v bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.watching = v
+}
+
+// negotiate resolves the Cluster GVR, retrying the conditions that can
+// resolve themselves (hub unreachable, Cluster CRD not installed yet) and
+// returning the ones that cannot (no supported version served). It returns
+// an empty GVR and a nil error when ctx ends while it is still waiting, so
+// shutdown is not reported as a failure.
+func (p *Provider) negotiate(ctx context.Context) (schema.GroupVersionResource, error) {
+	var zero schema.GroupVersionResource
+	logger := log.FromContext(ctx)
+	for {
+		gvr, err := resolveClusterGVR(p.disco)
+		switch {
+		case err == nil:
+			return gvr, nil
+		case errors.Is(err, errUnsupportedVersions), errors.Is(err, errNoDiscoveryClient):
+			return zero, err
+		}
+		// Retryable: the resource may appear (ClusterAPI installed after
+		// the operator) or the hub may come back. Not silent — the reason
+		// is logged and Watching() stays false, so k8s_r8r_discovery_up
+		// reads 0 for as long as this lasts.
+		logger.Error(err, "ClusterAPI inventory unavailable, retrying",
+			"resource", clusterGroupResource.String(), "retryAfter", negotiateRetry)
+		select {
+		case <-ctx.Done():
+			return zero, nil
+		case <-time.After(negotiateRetry):
+		}
+	}
+}
+
+// Sentinel errors distinguishing the fatal negotiation outcome from the
+// retryable ones (see negotiate).
+var (
+	// errUnsupportedVersions: the Cluster resource is served, but at no
+	// version this build understands. Structural, not transient.
+	errUnsupportedVersions = errors.New("capi: no supported cluster.x-k8s.io version served")
+	// errClusterResourceAbsent: the Cluster resource is not served at all
+	// (ClusterAPI is not installed on the hub, or not installed yet).
+	errClusterResourceAbsent = errors.New("capi: cluster.x-k8s.io clusters resource not served")
+	// errNoDiscoveryClient: construction bug, not a cluster condition.
+	errNoDiscoveryClient = errors.New("capi: no discovery client")
+)
+
+// resolveClusterGVR asks the API server which versions of
+// clusters.cluster.x-k8s.io it serves and returns the most preferred
+// supported one. When the resource is served only at versions this build
+// does not support it fails loudly — naming the group/resource, the versions
+// this build supports, and the versions the server serves — rather than
+// letting an unserved version turn into an endlessly retried 404 and an
+// apparently empty fleet (issue #28).
+func resolveClusterGVR(d k8sdiscovery.DiscoveryInterface) (schema.GroupVersionResource, error) {
+	var zero schema.GroupVersionResource
+	if d == nil {
+		return zero, fmt.Errorf("%w to negotiate the %s version", errNoDiscoveryClient, clusterGroupResource)
+	}
+
+	groups, err := d.ServerGroups()
+	if err != nil {
+		return zero, fmt.Errorf("capi: listing server API groups: %w", err)
+	}
+
+	// Versions the group advertises, then narrowed to those actually
+	// listing the "clusters" resource: a group version may exist for other
+	// resources without serving this one.
+	var served []string
+	for _, g := range groups.Groups {
+		if g.Name != clusterGroupResource.Group {
+			continue
+		}
+		for _, v := range g.Versions {
+			ok, err := servesResource(d, v.GroupVersion, clusterGroupResource.Resource)
+			if err != nil {
+				return zero, err
+			}
+			if ok {
+				served = append(served, v.Version)
+			}
+		}
+	}
+
+	for _, want := range supportedClusterVersions {
+		if slices.Contains(served, want) {
+			return clusterGroupResource.WithVersion(want), nil
+		}
+	}
+	if len(served) == 0 {
+		// ClusterAPI is not installed on this hub (or not yet): retryable,
+		// and distinct from a version skew.
+		return zero, fmt.Errorf("%w: %s not found in the discovery API",
+			errClusterResourceAbsent, clusterGroupResource)
+	}
+	return zero, fmt.Errorf("%w: %s serves none of %v (served: %v)",
+		errUnsupportedVersions, clusterGroupResource, supportedClusterVersions, served)
+}
+
+// servesResource reports whether the given group version lists the named
+// resource. A NotFound on the group version means "not served", not a
+// failure — the group list and the per-version resource list are two
+// separate reads and can disagree during an upgrade.
+func servesResource(d k8sdiscovery.DiscoveryInterface, groupVersion, resource string) (bool, error) {
+	list, err := d.ServerResourcesForGroupVersion(groupVersion)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("capi: listing resources for %s: %w", groupVersion, err)
+	}
+	for _, r := range list.APIResources {
+		if r.Name == resource {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // upsert handles informer add/update events.
