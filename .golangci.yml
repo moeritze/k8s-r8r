@@ -60,6 +60,9 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      # Parallel agent runs create git worktrees here; linting a checkout of
+      # the repo from inside the repo reports every finding twice.
+      - \.claude/worktrees
 formatters:
   enable:
     - gofmt
@@ -70,3 +73,4 @@ formatters:
       - third_party$
       - builtin$
       - examples$
+      - \.claude/worktrees
