@@ -58,6 +58,9 @@ spec:
         - --discovery-provider={{ .Values.discoveryProvider }}
         - --hub-name={{ .Values.hubName }}
         - --allowed-kinds={{ join "," .Values.allowedKinds }}
+        {{- with .Values.stripMetadataKeys }}
+        - --strip-metadata-keys={{ join "," . }}
+        {{- end }}
         {{- with .Values.spokeResync }}
         - --spoke-resync={{ . }}
         {{- end }}
