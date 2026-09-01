@@ -43,6 +43,16 @@ allowedKinds:
   - secrets
   - configmaps
 
+# Additional label/annotation keys stripped from replicas and excluded from
+# the source hash (--strip-metadata-keys), on top of the built-in
+# foreign-ownership denylist (argocd.argoproj.io/, replicator.v1.mittwald.de/,
+# reflector.v1.k8s.emberstack.com/, meta.helm.sh/, kustomize.toolkit.fluxcd.io/
+# and app.kubernetes.io/instance). An entry ending in "/" is a prefix match;
+# anything else is an exact key. Additive only — built-in entries cannot be
+# removed, because removing them lets a replica become a source for another
+# replication controller.
+stripMetadataKeys: []
+
 # Drift resync interval for spoke informers and periodic reconciles
 # (--spoke-resync), as a Go duration, e.g. "1h". Empty uses the engine
 # default of 10h.

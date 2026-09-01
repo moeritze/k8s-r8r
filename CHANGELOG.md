@@ -10,7 +10,31 @@ release; they are called out under **Changed** or **Removed**.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **`--strip-metadata-keys`** manager flag (chart value `stripMetadataKeys`)
+  extends the stripped-metadata denylist with fleet-specific keys.
+  Comma-separated and repeatable; a trailing `/` makes an entry a prefix
+  match. Additive only — built-in entries cannot be removed.
+
+### Fixed
+
+- **Replicas no longer inherit foreign ownership or replication metadata**
+  ([#26](https://github.com/moeritze/k8s-r8r/issues/26)). The engine now
+  strips `replicator.v1.mittwald.de/*`,
+  `reflector.v1.k8s.emberstack.com/*`, `argocd.argoproj.io/*`,
+  `app.kubernetes.io/instance`, `meta.helm.sh/*` and
+  `kustomize.toolkit.fluxcd.io/*` from replicas, and excludes them from the
+  source hash. Previously a replica of a source annotated for another
+  replication controller was itself a valid source for that controller, so
+  k8s-r8r seeded a second fanout whose destinations no `ReplicationPolicy`
+  evaluated; and a replica carrying ArgoCD's tracking label claimed
+  membership in an Application that never declared it, making it a prune
+  candidate. Existing replicas lose these keys on their next reconcile.
+  All other source metadata still propagates — this is a denylist scoped to
+  ownership, not an allowlist.
+- `docs/gitops.md` claimed "a normal Application will not prune them", which
+  was false under ArgoCD's default label-based resource tracking.
 
 ## [0.1.0-alpha.1] - 2026-08-24
 

@@ -50,17 +50,61 @@ kubectl get secrets -A -l app.kubernetes.io/managed-by=k8s-r8r
 kubectl get secrets -A -l r8r.io/source-name=registry-creds,r8r.io/source-namespace=platform
 ```
 
+## Ownership metadata is not replicated
+
+ArgoCD decides what an Application owns from *resource tracking metadata*
+on the object itself: `app.kubernetes.io/instance` under the default
+label tracking, `argocd.argoproj.io/tracking-id` under annotation
+tracking. If that metadata were copied from a source onto its replicas,
+each replica would claim membership in an Application that never declared
+it, in a namespace and cluster outside that Application's spec — an
+extraneous object, and a prune candidate.
+
+So the engine strips ownership and replication-intent metadata before
+writing a replica, and excludes the same keys from the source hash:
+
+| Stripped | Owner |
+|---|---|
+| `argocd.argoproj.io/*` | ArgoCD resource tracking and sync options |
+| `app.kubernetes.io/instance` | ArgoCD label tracking (the default mode) |
+| `meta.helm.sh/*` | Helm release ownership |
+| `kustomize.toolkit.fluxcd.io/*` | Flux kustomize-controller ownership |
+| `replicator.v1.mittwald.de/*` | mittwald/kubernetes-replicator |
+| `reflector.v1.k8s.emberstack.com/*` | emberstack/kubernetes-reflector |
+
+Everything else on the source propagates unchanged — this is a denylist
+scoped to ownership, not an allowlist. Functionally significant labels
+have to survive the trip (see the sealed-secrets note below). Extend the
+list for controllers specific to your fleet with
+`--strip-metadata-keys` (chart value `stripMetadataKeys`, see
+[annotations.md](annotations.md#stripped-metadata)); it only adds — the
+built-in entries cannot be removed.
+
+The foreign-replicator entries matter beyond GitOps: a replica carrying
+`replicator.v1.mittwald.de/replicate-to-clusters` is itself a valid source
+for that controller, so without stripping k8s-r8r would seed a second
+fanout whose destinations no `ReplicationPolicy` ever evaluated. Running
+another replicator side by side is the realistic migration path onto
+k8s-r8r, so this is the configuration that matters most.
+
 ## Keeping ArgoCD's hands off replicas
 
 Replicas live outside git, so ArgoCD Applications that manage the target
 namespaces should not fight or prune them.
 
-**Pruning:** replicas are cluster-local objects ArgoCD did not create, so
-a normal Application will not prune them. Trouble only starts if an
-Application manages an object of the same name — then the two controllers
-will fight over content (k8s-r8r restores its payload on drift). Avoid
-overlapping names, or make one side the owner deliberately (see conflict
-policies in [policies.md](policies.md)).
+**Pruning:** a replica carries no ArgoCD tracking metadata (see above), so
+no Application claims it and none will prune it. Note that stripping is
+what makes this true — do not re-add `app.kubernetes.io/instance` to a
+replicated source expecting the replica to be exempt. Trouble still
+starts if an Application manages an object of the same name in a target
+namespace — then the two controllers fight over content (k8s-r8r restores
+its payload on drift). Avoid overlapping names, or make one side the owner
+deliberately (see conflict policies in [policies.md](policies.md)).
+
+Stamping replicas with `argocd.argoproj.io/compare-options:
+IgnoreExtraneous` is *not* an alternative: it suppresses the aggregate
+sync status but leaves the object pruneable. Removing the ownership claim
+is the durable fix.
 
 **Diffing:** if you mirror whole namespaces or use tooling that reports
 unmanaged objects, exclude operator-managed ones. Instance-wide resource
