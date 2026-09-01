@@ -29,6 +29,8 @@ Parsed by `internal/annotations` (shared with the [[security-model|webhook]]). D
 
 `internal/engine` reconciles each `Replication` per target (workqueue key = source + targetCluster; independent backoff):
 - payload stripped of server-managed fields, stamped with `app.kubernetes.io/managed-by: k8s-r8r`, source-ref labels, `r8r.io/source-hash: sha256:…`
+- **metadata hygiene**: foreign ownership / replication-intent keys are stripped too — `replicator.v1.mittwald.de/*`, `reflector.v1.k8s.emberstack.com/*`, `argocd.argoproj.io/*`, `app.kubernetes.io/instance`, `meta.helm.sh/*`, `kustomize.toolkit.fluxcd.io/*`, plus anything in `--strip-metadata-keys`. A replica carrying a foreign replicator's annotation would be a valid source for *that* controller, i.e. a fanout no [[policy-model|policy]] evaluated — the [[security-model|default-deny]] claim depends on this. Argo CD tracking keys are the mirror case: they make a replica prunable. Denylist, never an allowlist — a replicated sealed-secrets key must keep its own labels to work.
+- one predicate (`isStrippedKey`) feeds both the replica and the canonical hash. Stripping in only one of them would make `SourceHash(replica) != SourceHash(source)` forever → apply on every reconcile → [[drift-detection|drift]] event → enqueue → hot loop against every spoke.
 - applied via server-side apply (field manager `k8s-r8r`) over the push `Transport` using the spoke's [[security-model|bootstrapped SA token]]
 - conflicts with pre-existing unmanaged objects: `Fail` (default) / `Overwrite` (policy-gated) / `Adopt` (hash-equal only)
 - missing namespace: created only when policy sets `allowNamespaceCreation`; namespaces are never GC'd

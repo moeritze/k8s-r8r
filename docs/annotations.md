@@ -117,6 +117,41 @@ Request annotations themselves never propagate to replicas — all
 `r8r.io/*` keys are stripped before the engine's own metadata is applied,
 so a replica can never re-trigger replication.
 
+### Stripped metadata
+
+Beyond its own keys, the engine strips metadata that asserts **ownership
+by, or replication intent toward, another controller**. Such metadata is
+removed from the replica and excluded from the source hash, so source and
+replica still hash identically and drift detection is unaffected.
+
+| Stripped from replicas | Why |
+|---|---|
+| `replicator.v1.mittwald.de/*` | a replica carrying these is a valid *source* for mittwald/kubernetes-replicator — k8s-r8r would seed a second fanout no `ReplicationPolicy` evaluated |
+| `reflector.v1.k8s.emberstack.com/*` | same hazard, emberstack/kubernetes-reflector |
+| `argocd.argoproj.io/*` | ArgoCD resource tracking and sync options |
+| `app.kubernetes.io/instance` | ArgoCD's default (label) tracking key — a replica carrying it is an extraneous, prunable member of an Application that never declared it |
+| `meta.helm.sh/*` | Helm release ownership |
+| `kustomize.toolkit.fluxcd.io/*` | Flux kustomize-controller ownership |
+
+Everything else propagates unchanged. This is deliberately a **denylist,
+not an allowlist**: source metadata is often functionally significant on
+the target — a replicated sealed-secrets key without
+`sealedsecrets.bitnami.com/sealed-secrets-key: active` is inert on
+arrival — so dropping unknown keys by default would silently break
+working replications.
+
+Extend the list for controllers specific to your fleet:
+
+```sh
+--strip-metadata-keys=example.com/owner,vendor.example/
+```
+
+Comma-separated and repeatable. An entry ending in `/` is a prefix match;
+anything else is an exact key. The chart exposes it as
+`stripMetadataKeys` (a list). The flag is **additive only** — the built-in
+entries above cannot be removed, because removing them reintroduces the
+cross-controller fanout they exist to prevent.
+
 Finalizers used by the operator: `r8r.io/finalizer` on annotated sources
 and `r8r.io/engine-finalizer` on `Replication` objects — both exist so
 deletion waits for replica cleanup (see [uninstall.md](uninstall.md)).

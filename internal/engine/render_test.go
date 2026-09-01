@@ -169,6 +169,149 @@ func TestSourceHash_IgnoresIdentityAndPipelineKeys(t *testing.T) {
 	}
 }
 
+// withMetadata returns a source Secret carrying key=value as both a label and
+// an annotation, so one table entry covers both maps.
+func withMetadata(key, value string) *unstructured.Unstructured {
+	src := testSecret()
+	md := src.Object["metadata"].(map[string]any)
+	md["labels"].(map[string]any)[key] = value
+	md["annotations"].(map[string]any)[key] = value
+	return src
+}
+
+// Spec "Foreign ownership metadata is not replicated": metadata asserting
+// another controller's ownership or replication intent never reaches a
+// replica. The mittwald case is the severe one — such a replica is a valid
+// source for that controller, so k8s-r8r would seed a second fanout whose
+// destinations no ReplicationPolicy evaluated.
+func TestRender_StripsForeignOwnershipMetadata(t *testing.T) {
+	cases := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{"mittwald replicate-to-clusters", "replicator.v1.mittwald.de/replicate-to-clusters", ".*"},
+		{"mittwald target-namespace", "replicator.v1.mittwald.de/target-namespace", "kube-system"},
+		{"emberstack reflector", "reflector.v1.k8s.emberstack.com/reflection-allowed", "true"},
+		{"argocd tracking-id", "argocd.argoproj.io/tracking-id", "some-app:/Secret:app/web-creds"},
+		{"argocd sync-options", "argocd.argoproj.io/sync-options", "Prune=false"},
+		{"argocd instance label", "app.kubernetes.io/instance", "some-app"},
+		{"helm release ownership", "meta.helm.sh/release-name", "platform"},
+		{"flux kustomize ownership", "kustomize.toolkit.fluxcd.io/name", "apps"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := withMetadata(tc.key, tc.value)
+			rep, hash := Renderer{}.Render(src, "target-ns", "")
+
+			if _, leaked := rep.GetLabels()[tc.key]; leaked {
+				t.Errorf("foreign ownership label %q leaked into replica", tc.key)
+			}
+			if _, leaked := rep.GetAnnotations()[tc.key]; leaked {
+				t.Errorf("foreign ownership annotation %q leaked into replica", tc.key)
+			}
+
+			// The stripped key must also be invisible to the hash, or the
+			// replica never converges (see below).
+			if hash != SourceHash(testSecret()) {
+				t.Errorf("stripped key %q changed the source hash", tc.key)
+			}
+		})
+	}
+}
+
+// Regression guard for the drift hot loop: stripping a key from the replica
+// while still hashing it on the source would make SourceHash(replica) differ
+// from the desired hash forever, so the engine would re-apply on every
+// reconcile, each apply would emit a metadata event, and the drift handler
+// would enqueue again — against every spoke.
+func TestSourceHash_StableAcrossForeignMetadataStripping(t *testing.T) {
+	src := testSecret()
+	md := src.Object["metadata"].(map[string]any)
+	md["labels"].(map[string]any)["app.kubernetes.io/instance"] = "some-app"
+	md["annotations"].(map[string]any)["replicator.v1.mittwald.de/replicate-to-clusters"] = ".*"
+	md["annotations"].(map[string]any)["argocd.argoproj.io/tracking-id"] = "some-app:/Secret:app/web-creds"
+
+	srcHash := SourceHash(src)
+	rep, renderedHash := Renderer{}.Render(src, "target-ns", "")
+	if renderedHash != srcHash {
+		t.Fatalf("rendered hash %s != source hash %s", renderedHash, srcHash)
+	}
+	if got := SourceHash(rep); got != srcHash {
+		t.Fatalf("replica re-hash %s != source hash %s: stripped keys still counted in the hash, "+
+			"which would make the engine re-apply on every reconcile", got, srcHash)
+	}
+}
+
+// The denylist must stay a denylist: functionally significant source metadata
+// has to keep propagating. A replicated sealed-secrets key without its
+// sealed-secrets-key label is inert on arrival.
+func TestRender_PropagatesFunctionalMetadata(t *testing.T) {
+	src := withMetadata("sealedsecrets.bitnami.com/sealed-secrets-key", "active")
+	src.Object["metadata"].(map[string]any)["labels"].(map[string]any)["app.kubernetes.io/name"] = "web"
+
+	rep, _ := Renderer{}.Render(src, "target-ns", "")
+	labels, ann := rep.GetLabels(), rep.GetAnnotations()
+
+	if labels["sealedsecrets.bitnami.com/sealed-secrets-key"] != "active" {
+		t.Error("sealed-secrets key label was stripped; the denylist must not become an allowlist")
+	}
+	if ann["sealedsecrets.bitnami.com/sealed-secrets-key"] != "active" {
+		t.Error("sealed-secrets annotation was stripped")
+	}
+	// app.kubernetes.io/instance is denied, but the rest of the recommended
+	// label set is not.
+	if labels["app.kubernetes.io/name"] != "web" {
+		t.Error("app.kubernetes.io/name was stripped; only the instance label is an ownership claim")
+	}
+	if labels["team"] != "web" || ann["note"] != "keep-me" {
+		t.Error("unrelated user metadata was lost")
+	}
+}
+
+// Spec scenario "Operator-configured additional keys": --strip-metadata-keys
+// extends the denylist for both the replica and the hash.
+func TestSetExtraStrippedKeys(t *testing.T) {
+	t.Cleanup(func() { SetExtraStrippedKeys(nil) })
+	SetExtraStrippedKeys([]string{"example.com/owner", "  ", "vendor.example/", "/"})
+
+	baseline := SourceHash(testSecret())
+
+	for _, key := range []string{"example.com/owner", "vendor.example/anything"} {
+		src := withMetadata(key, "x")
+		rep, hash := Renderer{}.Render(src, "target-ns", "")
+		if _, leaked := rep.GetLabels()[key]; leaked {
+			t.Errorf("configured key %q not stripped from replica labels", key)
+		}
+		if _, leaked := rep.GetAnnotations()[key]; leaked {
+			t.Errorf("configured key %q not stripped from replica annotations", key)
+		}
+		if hash != baseline {
+			t.Errorf("configured key %q changed the source hash", key)
+		}
+	}
+
+	// A near miss must not be stripped: "example.com/owner" is an exact key,
+	// not a prefix.
+	src := withMetadata("example.com/owner-extra", "x")
+	rep, _ := Renderer{}.Render(src, "target-ns", "")
+	if rep.GetLabels()["example.com/owner-extra"] != "x" {
+		t.Error("exact-key entry matched as a prefix")
+	}
+
+	// Clearing the configuration restores the built-in denylist only.
+	SetExtraStrippedKeys(nil)
+	mixed := withMetadata("example.com/owner", "x")
+	mixed.Object["metadata"].(map[string]any)["labels"].(map[string]any)["app.kubernetes.io/instance"] = "some-app"
+	rep, _ = Renderer{}.Render(mixed, "target-ns", "")
+	if rep.GetLabels()["example.com/owner"] != "x" {
+		t.Error("configured keys were not cleared")
+	}
+	if _, leaked := rep.GetLabels()["app.kubernetes.io/instance"]; leaked {
+		t.Error("built-in denylist entry disappeared with the configured ones")
+	}
+}
+
 func TestNamespacePayload(t *testing.T) {
 	ns := namespacePayload("fresh")
 	if ns.GetName() != "fresh" {

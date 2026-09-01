@@ -112,6 +112,24 @@ func parseAllowedKinds(
 	return allowlist, kindGVKs, scope, nil
 }
 
+// stringListFlag is a flag.Value accumulating a list of strings: repeatable
+// and comma-separated, so --strip-metadata-keys=a,b and --strip-metadata-keys=a
+// --strip-metadata-keys=b are equivalent. Empty entries are dropped.
+type stringListFlag []string
+
+// String implements flag.Value.
+func (s *stringListFlag) String() string { return strings.Join(*s, ",") }
+
+// Set implements flag.Value.
+func (s *stringListFlag) Set(v string) error {
+	for part := range strings.SplitSeq(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			*s = append(*s, part)
+		}
+	}
+	return nil
+}
+
 // rotatingAuth is an http.RoundTripper that authenticates every request with
 // a currently valid short-lived ServiceAccount token from the Rotator, so a
 // spoke's clients stay authenticated across token refreshes without ever
@@ -286,6 +304,7 @@ func main() {
 	var discoveryProviderName string
 	var hubName string
 	var allowedKinds string
+	var stripMetadataKeys stringListFlag
 	var spokeResync time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -311,6 +330,10 @@ func main() {
 		"The source-cluster identity stamped onto replicas.")
 	flag.StringVar(&allowedKinds, "allowed-kinds", "secrets,configmaps",
 		"Comma-separated resource names enabled for replication (supported: secrets, configmaps).")
+	flag.Var(&stripMetadataKeys, "strip-metadata-keys",
+		"Additional label/annotation keys stripped from replicas and excluded from the source hash, "+
+			"on top of the built-in foreign-ownership denylist. Comma-separated and repeatable; "+
+			"an entry ending in \"/\" is a prefix match. Additive only — built-in entries cannot be removed.")
 	flag.DurationVar(&spokeResync, "spoke-resync", 0,
 		"Drift resync interval for spoke informers and periodic reconciles (0 uses the engine default of 10h).")
 	opts := zap.Options{
@@ -326,6 +349,10 @@ func main() {
 		setupLog.Error(err, "Invalid --allowed-kinds")
 		os.Exit(1)
 	}
+
+	// Process-wide: the renderer and the canonical hash share one denylist,
+	// so this must be set before any reconciler runs.
+	engine.SetExtraStrippedKeys(stripMetadataKeys)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
