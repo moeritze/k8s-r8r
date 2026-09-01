@@ -47,11 +47,20 @@ cleanup, cluster registration/deregistration, and fanout at scale
 (`test/e2e/`). All of it runs on every pull request; `E2E (kind fleet,
 hub + 2 spokes)` is a required status check on `main`.
 
-**What is unproven.** Real-world operation. There is no production
-adopter and no run against a live ClusterAPI fleet yet — everything above
-happens in CI, against clusters the suite creates itself. Expect rough
-edges in day-2 ergonomics, upgrade paths, and failure modes CI does not
-reach. Do not run it against production fleets.
+**What is being proven right now.** k8s-r8r is under active trial on a
+real ClusterAPI-managed **staging** fleet — the first run outside CI,
+against clusters the project did not create itself. That trial is
+generating findings faster than CI ever did: status conditions reporting
+`Ready=True` under policy denial, drift correction leaving no trace,
+replicas inheriting foreign GitOps ownership metadata, discovery pinned
+to a CAPI API version that upstream is removing, spoke RBAC wider than
+the policy universe. They are tracked in the open
+[issues](https://github.com/moeritze/k8s-r8r/issues) and being worked
+through. Treat the coverage above as CI-proven, not yet field-proven.
+
+**What is still unproven.** Production operation. No production adopter,
+no long-running deployment, upgrade paths untested, and day-2 failure
+modes still being discovered. Do not run it against production fleets.
 
 Version tags publish a multi-arch image and Helm chart to ghcr (see
 [docs/releasing.md](docs/releasing.md)).
