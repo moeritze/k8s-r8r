@@ -29,17 +29,21 @@ Failure modes, deliberately different:
 
 Before this, the GVR was pinned to `v1beta1`: an unserved version returned 404, the reflector retried forever, `Start` hung in `WaitForCacheSync`, the pod stayed Ready, and the fleet looked empty. Issue #28.
 
+## Provider settings — not wired up yet
+
+`discovery.Options.Settings` (`internal/discovery/registry.go`) is a per-provider string map, and the CAPI provider reads `namespace` from it to restrict the `Cluster` watch to one namespace. Nothing populates it in a deployed operator: `cmd/main.go` constructs `discovery.New(name, discovery.Options{HubConfig: hubCfg})` and there is no flag or chart value that reaches the map. So in practice the provider always watches `Cluster` objects **cluster-wide**, and the settings mechanism only works from tests. It also removes the natural escape hatch for a version-negotiation failure above. Tracked: [#37](https://github.com/moeritze/k8s-r8r/issues/37).
+
 ## Credential bootstrap (D5)
 
 The CAPI kubeconfig is cluster-admin — never used for steady-state traffic. On registration, once:
 
 ```
 admin kubeconfig ──▶ create on spoke: ns k8s-r8r-system, SA k8s-r8r,
-                     narrow ClusterRole (only kinds/verbs the policy universe needs)
+                     ClusterRole scoped to the --allowed-kinds allowlist
                 └──▶ then: short-lived SA tokens (TokenRequest, refresh at 80% TTL)
 ```
 
-Hub compromise blast radius drops from "fleet admin" to "write allowlisted kinds". RBAC re-narrows when the policy universe shrinks. Details: [[security-model]].
+Hub compromise blast radius drops from "fleet admin" to "write allowlisted kinds". Be precise about *which* allowlist: the grant (`RBACScope`, `internal/cluster/bootstrap.go`) is derived from the `--allowed-kinds` flag, **not** from the [[policy-model|policy universe]] — full replica verbs on each allowlisted kind, in every namespace, via ClusterRoleBinding. It therefore re-narrows only when `--allowed-kinds` shrinks and the pod restarts to replay bootstrap, never when a policy tightens. Sizing and the reasoning for deferring policy-derived scoping ([#29](https://github.com/moeritze/k8s-r8r/issues/29)): [[security-model]].
 
 ## Cluster runtimes
 

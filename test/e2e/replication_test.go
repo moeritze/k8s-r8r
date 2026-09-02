@@ -364,12 +364,28 @@ func TestPolicyDeleteRevocation(t *testing.T) {
 		rep, err := getReplication(srcNS, repName)
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(rep.Status.Inventory).To(BeEmpty(), "inventory released")
+		// Terminal state, not an intermediate one: the revocation leaves the
+		// object durably red. Ready reports that nothing is replicating,
+		// TargetsResolved reports why (issue #27).
 		cond := readyCondition(rep)
 		g.Expect(cond).NotTo(BeNil())
 		g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
-		g.Expect(cond.Reason).To(BeElementOf(
-			r8rv1alpha1.ReasonPolicyDenied, r8rv1alpha1.ReasonPolicyRevoked))
+		g.Expect(cond.Reason).To(Equal(r8rv1alpha1.ReasonNoTargets))
+		resolved := conditionOfType(rep, r8rv1alpha1.ReplicationConditionTargetsResolved)
+		g.Expect(resolved).NotTo(BeNil())
+		g.Expect(resolved.Status).To(Equal(metav1.ConditionFalse))
+		g.Expect(resolved.Reason).To(Equal(r8rv1alpha1.ReasonPolicyDenied))
 	}, replTimeout, replPoll).Should(Succeed())
+
+	// And it stays that way: the durable record of a revocation must not
+	// decay back to a green object once the events expire.
+	g.Consistently(func(g Gomega) {
+		rep, err := getReplication(srcNS, repName)
+		g.Expect(err).NotTo(HaveOccurred())
+		cond := readyCondition(rep)
+		g.Expect(cond).NotTo(BeNil())
+		g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+	}, 15*time.Second, replPoll).Should(Succeed())
 }
 
 // TestSourceDeleteCleanup verifies the finalizer handshake on source

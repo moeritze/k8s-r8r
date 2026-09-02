@@ -18,7 +18,7 @@ Replica desired/ready/failed gauges (per cluster) · policy/webhook denial count
 
 ## Troubleshooting
 
-**Zero clusters discovered.** First check `k8s_r8r_discovery_up`. If it is 1, the fleet really has no `Cluster` objects (or none the provider's namespace setting sees) — this is not an operator fault. If it is 0, check the negotiated CAPI version in the operator log:
+**Zero clusters discovered.** First check `k8s_r8r_discovery_up`. If it is 1, the fleet really has no `Cluster` objects the provider can see — and since the provider's namespace setting is unreachable in a deployed operator ([#37](https://github.com/moeritze/k8s-r8r/issues/37), [[cluster-discovery|provider settings]]) the watch is cluster-wide, so this means the hub genuinely has none. Not an operator fault. If it is 0, check the negotiated CAPI version in the operator log:
 
 ```sh
 kubectl -n k8s-r8r-system logs deploy/k8s-r8r | grep -i 'ClusterAPI'
@@ -39,6 +39,13 @@ Recorded through the **core `v1` Event API** (`mgr.GetEventRecorderFor`), not `e
 ## Status discipline (D8)
 
 Summary counts + `Ready` condition; per-target detail only for non-ready targets, capped at 20 + overflow counter; status writes skipped when unchanged. 60-target e2e fanout: 13.9KB status, zero churn over 2 minutes. Full per-target truth lives in metrics/events.
+
+## What you cannot alert on yet
+
+Two blind spots to know about before wiring alerts; both are open issues with fixes in flight.
+
+- **`Ready` does not mean "it replicated"** ([#27](https://github.com/moeritze/k8s-r8r/issues/27)). `Ready` is computed from the failed-target count, and policy-denied targets never enter the target list — so a request that replicated nothing reports `Ready=True, AllTargetsReady, 0/0 targets ready`, identical to a healthy fanout. A typo'd cluster selector, a policy tightened too far, and a working replication all present the same. Alert instead on the `PolicyDenied` / `PolicyRevoked` events and on `k8s_r8r_policy_denials_total` / `k8s_r8r_revocations_total`. Same reason an Argo CD Lua health check keyed on `Ready` would render a no-op replication healthy. Mechanism: [[replication-flow]].
+- **A corrected drift is silent** ([#30](https://github.com/moeritze/k8s-r8r/issues/30)). No event, no condition, no distinguishable log line. `k8s_r8r_drift_events_total` is *not* the counter you want — it counts spoke informer events on managed replicas including the engine's own apply echoes, so it rises during normal fanout. There is currently no way to answer "has anything been tampering with my replicated secrets?" from the operator's output. Detail: [[drift-detection]].
 
 ## HA
 

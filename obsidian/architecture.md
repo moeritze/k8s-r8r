@@ -33,7 +33,7 @@ Hub-spoke, push-based. Everything runs on the hub; spokes only receive replicas 
 | D4 | Default deny, union, allowlists only | deny-precedence kills policy engines — see [[policy-model]] |
 | D5 | Narrow spoke SA bootstrap | blast radius; retrofit never happens — see [[security-model]] |
 | D6 | Webhook advisory, controller authoritative | `failurePolicy: Fail` would block secret writes |
-| D7 | Conflicts Fail/Overwrite/Adopt, no auto-rename | silent rename breaks name-based consumers |
+| D7 | Conflicts Fail/Overwrite/Adopt, no auto-rename | silent rename breaks name-based consumers — caveats in [[replication-flow]] |
 | D8 | Capped status | etcd 1.5MB limit, no churn — see [[operations]] |
 | D9 | Workqueue keyed (source, targetCluster) | slow cluster never blocks fanout; sharding-ready |
 | D10 | kubebuilder + controller-runtime, `r8r.io/v1alpha1` | ecosystem standard |

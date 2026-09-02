@@ -890,8 +890,13 @@ func (r *Reconciler) event(rep *r8rv1alpha1.Replication, eventType, reason, mess
 }
 
 // emitTransitionEvents turns Ready-condition transitions into lifecycle
-// events (observability spec: replicated / denied), so events fire on
-// state changes rather than on every reconcile.
+// events (observability spec: replicated / denied / no targets), so events
+// fire on state changes rather than on every reconcile.
+//
+// Because Ready is False for a Replication with no desired targets, the
+// Replicated event now only fires when something was actually replicated: a
+// denied request no longer manufactures a "0/0 targets ready" success event
+// on every reconcile.
 func (r *Reconciler) emitTransitionEvents(rep *r8rv1alpha1.Replication, prev, next *metav1.Condition) {
 	if next == nil {
 		return
@@ -901,9 +906,10 @@ func (r *Reconciler) emitTransitionEvents(rep *r8rv1alpha1.Replication, prev, ne
 		(prev == nil || prev.Status != metav1.ConditionTrue):
 		r.event(rep, "Normal", "Replicated", next.Message)
 	case next.Status == metav1.ConditionFalse &&
-		next.Reason == r8rv1alpha1.ReasonPolicyDenied &&
+		(next.Reason == r8rv1alpha1.ReasonPolicyDenied ||
+			next.Reason == r8rv1alpha1.ReasonNoTargets) &&
 		(prev == nil || prev.Reason != next.Reason):
-		r.event(rep, "Warning", r8rv1alpha1.ReasonPolicyDenied, next.Message)
+		r.event(rep, "Warning", next.Reason, next.Message)
 	}
 }
 

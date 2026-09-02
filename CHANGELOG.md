@@ -12,6 +12,12 @@ release; they are called out under **Changed** or **Removed**.
 
 ### Added
 
+- **`TargetsResolved` condition on `Replication`** reports whether a request
+  resolved to any target: `True` once at least one target survives selector
+  matching and policy evaluation, `False`/`PolicyDenied` when policy refused
+  every candidate, `False`/`NoTargets` when the `r8r.io/target-clusters`
+  selector matched no ready cluster. The last case previously produced no
+  condition and no event at all. Additive — no CRD schema change.
 - **`--strip-metadata-keys`** manager flag (chart value `stripMetadataKeys`)
   extends the stripped-metadata denylist with fleet-specific keys.
   Comma-separated and repeatable; a trailing `/` makes an entry a prefix
@@ -25,6 +31,23 @@ release; they are called out under **Changed** or **Removed**.
 
 ### Fixed
 
+- **Policy-denied and revoked `Replication` objects no longer report
+  `Ready: True`** ([#27](https://github.com/moeritze/k8s-r8r/issues/27)).
+  A `Replication` with zero resolved targets reported
+  `Ready: True, reason: AllTargetsReady, message: 0/0 targets ready`,
+  indistinguishable in status from a healthy fanout, so there was nothing to
+  alert on. Two controllers wrote the `Ready` condition with no arbitration:
+  the request controller set `Ready=False`/`PolicyDenied`, then the engine
+  rewrote `Ready` from `failed == 0` alone — and zero targets means zero
+  failures. Because the request controller also watches `Replication`
+  objects, the two writes re-triggered each other in an unbounded status
+  ping-pong, bounded only by the rate limiter. The request controller now
+  writes `TargetsResolved` and never `Ready`; the engine reports
+  `Ready: False`, reason `NoTargets`, for a live `Replication` with no
+  desired targets, and emits a `NoTargets` warning event instead of the
+  spurious `Replicated 0/0 targets ready` the ping-pong manufactured.
+  **Upgrade note:** affected objects flip from green to red on their first
+  reconcile after upgrade. Nothing about what is replicated changes.
 - **Drift correction is now observable**
   ([#30](https://github.com/moeritze/k8s-r8r/issues/30)). When a replica's
   content is rewritten on a spoke, the engine emits a `DriftCorrected`
