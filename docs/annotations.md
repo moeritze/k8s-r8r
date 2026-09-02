@@ -14,6 +14,7 @@ yourself.
 | `r8r.io/target-clusters` | label selector string | yes (in practice) | empty — selects **no** clusters |
 | `r8r.io/target-namespaces` | comma-separated namespace list | no | the source's own namespace |
 | `r8r.io/target-name` | DNS-1123 subdomain | no | replicas keep the source's name |
+| `r8r.io/conflict-policy` | `Fail` / `Adopt` / `Overwrite` | no | `Fail` — consents to nothing |
 
 ### `r8r.io/replicate`
 
@@ -54,6 +55,46 @@ automatically (no prefixes/suffixes), because consumers mount secrets by
 name and a silent rename breaks workloads with no error surfaced (design
 D7).
 
+### `r8r.io/conflict-policy`
+
+The request's half of a **two-key turn**. It states the strongest thing the
+engine may do to an object that already occupies the replica's name and was
+not created by k8s-r8r:
+
+| Value | Means |
+|---|---|
+| `Fail` (default) | never touch a pre-existing object; report a `Conflict` |
+| `Adopt` | take ownership without rewriting, and only when the existing object's content hash already equals the source's |
+| `Overwrite` | take the object over, replacing its payload |
+
+The engine acts on the **weaker** of this value and what the matching
+`ReplicationPolicy` objects permit (`allowedConflictPolicies`, see
+[policies.md](policies.md)), ranked `Fail` < `Adopt` < `Overwrite`:
+
+| request asks | policy permits | engine acts with |
+|---|---|---|
+| (absent) | `Overwrite` | `Fail` |
+| `Overwrite` | `Fail` (the default grant) | `Fail` |
+| `Overwrite` | `Adopt` | `Adopt` |
+| `Adopt` | `Overwrite` | `Adopt` |
+| `Overwrite` | `Overwrite` | `Overwrite` |
+
+So an admin granting `Overwrite` in a policy does **not** hand it to every
+request under that policy: each source must also opt in per object. And a
+source asking for `Overwrite` gets no more than its policies allow.
+
+Values are case-sensitive and the set is closed — `overwrite` is rejected, the
+same as any other malformed value. When only one key turns and a conflict
+actually occurs, the target's `Conflict` message names the key that is
+missing, so `kubectl describe replication` tells you whether to add the
+annotation or to change the policy.
+
+> **Upgrade note.** Before this key existed, the policy grant alone decided.
+> A source that relied on a policy-granted `Overwrite` or `Adopt` and carries
+> no `r8r.io/conflict-policy` annotation now reports `Conflict` instead of
+> taking the object over. Add the annotation to the sources that should have
+> it.
+
 ## Validation behavior
 
 - Malformed values (bad selector, invalid namespace, invalid name) mark
@@ -64,6 +105,10 @@ D7).
   rejected by the controller so typos fail loudly instead of silently
   selecting nothing. The webhook only warns on unknown keys (an older
   webhook must not block newer requests).
+- A `r8r.io/conflict-policy` value that no policy able to match the source
+  permits is **not** an error: the request is otherwise valid and replicates
+  normally, so the webhook admits it with a warning and conflict handling
+  falls back to the weaker key.
 
 ## Examples
 

@@ -590,7 +590,7 @@ func (r *Reconciler) applyTarget(
 	case err != nil:
 		return fail(classifyTransportErr(err), err.Error(), true)
 	default:
-		decision := DecideConflict(existing, src.GetUID(), hash, eff.AllowedConflictPolicies)
+		decision := DecideConflict(existing, src, hash, eff.AllowedConflictPolicies)
 		switch decision.Action {
 		case ActionFail:
 			telemetry.IncConflict("fail")

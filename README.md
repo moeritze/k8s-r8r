@@ -113,8 +113,10 @@ or metrics — hashes only, enforced by an AST audit test.
 - **Drift detection** via per-cluster metadata-only informers +
   `r8r.io/source-hash` comparison — replica payloads are never cached on
   the hub; edited or deleted replicas are restored.
-- **Conflict handling**: `Fail` (default) / `Overwrite` (policy-gated) /
-  `Adopt` (content-hash match only); never automatic renaming.
+- **Conflict handling**: `Fail` (default) / `Adopt` (content-hash match
+  only) / `Overwrite` — a two-key turn, needing both the source's
+  `r8r.io/conflict-policy` opt-in and a policy grant; never automatic
+  renaming.
 - **No orphans**: finalizers + per-Replication inventory garbage-collect
   replicas on source deletion, annotation removal, target deselection,
   and cluster deregistration.

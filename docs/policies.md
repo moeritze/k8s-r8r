@@ -86,8 +86,12 @@ several policies permit the same target, their options combine:
   without rewriting — only when the existing object's content hash equals
   the source hash. `Overwrite` replaces the payload — it is weaponizable
   (it can replace a victim cluster's existing secret), so grant it
-  narrowly. The engine acts with the strongest granted policy
-  (Overwrite > Adopt > Fail).
+  narrowly. This option is only **half** of the decision: the engine acts
+  with the weaker of the strongest granted policy and what the source
+  itself asks for via `r8r.io/conflict-policy` (see
+  [annotations.md](annotations.md#r8rioconflict-policy)), ranked
+  Overwrite > Adopt > Fail. Granting `Overwrite` here does not apply it to
+  every request the policy permits — each source must also opt in.
 - **`revocationPolicy`**: what happens to already-created replicas when
   permission is withdrawn (policy edited/deleted, annotations removed).
   `Delete` (default) removes them on the next reconcile — revoked data

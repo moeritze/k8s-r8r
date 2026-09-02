@@ -254,6 +254,65 @@ func TestUnknownKeyWarnsButAdmits(t *testing.T) {
 	}
 }
 
+// The new request-side key is part of the closed set the parser accepts, so a
+// malformed value is denied at admission with a message naming the key
+// (issue #34).
+func TestInvalidConflictPolicyDenied(t *testing.T) {
+	h := newHandler(t, testPolicy())
+	resp := h.Handle(context.Background(), admissionRequest(t, admissionv1.Create, "Secret", "prod",
+		map[string]string{annReplicate: "true", annTargetClusters: "env=prod", annConflictPolicy: "overwrite"}))
+	requireDenied(t, resp, annConflictPolicy, "expected one of")
+}
+
+// A conflict policy no candidate policy grants is advisory only: the request
+// still replicates, so it warns rather than denying.
+func TestUnsatisfiableConflictPolicyWarnsButAdmits(t *testing.T) {
+	h := newHandler(t, testPolicy()) // grants nothing beyond the Fail default
+	resp := h.Handle(context.Background(), admissionRequest(t, admissionv1.Create, "Secret", "prod",
+		map[string]string{
+			annReplicate: "true", annTargetClusters: "env=prod",
+			annTargetNamespaces: "prod", annConflictPolicy: "Overwrite",
+		}))
+	requireAllowed(t, resp)
+	found := false
+	for _, w := range resp.Warnings {
+		if strings.Contains(w, annConflictPolicy) && strings.Contains(w, "Overwrite") {
+			found = true
+		}
+		if strings.Contains(w, secretPayload) {
+			t.Errorf("warning leaks secret payload: %q", w)
+		}
+	}
+	if !found {
+		t.Errorf("expected a warning about the ungranted conflict policy, got %v", resp.Warnings)
+	}
+}
+
+// A granted conflict policy passes silently — no warning noise on the happy
+// path, and Fail (the default) never warns either.
+func TestGrantedConflictPolicyDoesNotWarn(t *testing.T) {
+	p := testPolicy()
+	p.Spec.Options.AllowedConflictPolicies = []r8rv1alpha1.ConflictPolicy{
+		r8rv1alpha1.ConflictPolicyFail, r8rv1alpha1.ConflictPolicyOverwrite,
+	}
+	for _, value := range []string{"Overwrite", "Fail", ""} {
+		ann := map[string]string{
+			annReplicate: "true", annTargetClusters: "env=prod", annTargetNamespaces: "prod",
+		}
+		if value != "" {
+			ann[annConflictPolicy] = value
+		}
+		resp := newHandler(t, p).Handle(context.Background(),
+			admissionRequest(t, admissionv1.Create, "Secret", "prod", ann))
+		requireAllowed(t, resp)
+		for _, w := range resp.Warnings {
+			if strings.Contains(w, annConflictPolicy) {
+				t.Errorf("conflict policy %q warned unnecessarily: %q", value, w)
+			}
+		}
+	}
+}
+
 func TestNamespaceSelectorPolicyFailsOpen(t *testing.T) {
 	// A policy that allowlists source namespaces by selector cannot be checked
 	// without namespace labels at admission time; it must count as matching.

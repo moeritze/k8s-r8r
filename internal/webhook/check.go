@@ -66,13 +66,7 @@ func checkPolicies(policies []r8rv1alpha1.ReplicationPolicy, kind, sourceNamespa
 
 	// Dimension 1: source namespace (exact-name lists; namespaceSelector fails
 	// open — see package docs).
-	var nsMatched []*r8rv1alpha1.ReplicationPolicy
-	for i := range policies {
-		p := &policies[i]
-		if containsString(p.Spec.Sources.Namespaces, sourceNamespace) || p.Spec.Sources.NamespaceSelector != nil {
-			nsMatched = append(nsMatched, p)
-		}
-	}
+	nsMatched := policiesForSourceNamespace(policies, sourceNamespace)
 	if len(nsMatched) == 0 {
 		return &denial{
 			dimension: policy.DimensionSourceNamespace,
@@ -81,12 +75,7 @@ func checkPolicies(policies []r8rv1alpha1.ReplicationPolicy, kind, sourceNamespa
 	}
 
 	// Dimension 2: source kind, among the namespace-matching policies.
-	var kindMatched []*r8rv1alpha1.ReplicationPolicy
-	for _, p := range nsMatched {
-		if containsString(p.Spec.Sources.Kinds, kind) {
-			kindMatched = append(kindMatched, p)
-		}
-	}
+	kindMatched := policiesForKind(nsMatched, kind)
 	if len(kindMatched) == 0 {
 		return &denial{
 			dimension: policy.DimensionSourceKind,
@@ -141,6 +130,53 @@ func checkPolicies(policies []r8rv1alpha1.ReplicationPolicy, kind, sourceNamespa
 	}
 
 	return nil
+}
+
+// policiesForSourceNamespace narrows the policy universe to those whose
+// sources could include sourceNamespace. A namespaceSelector fails open:
+// namespace labels are not available at admission time.
+func policiesForSourceNamespace(policies []r8rv1alpha1.ReplicationPolicy, sourceNamespace string) []*r8rv1alpha1.ReplicationPolicy {
+	var out []*r8rv1alpha1.ReplicationPolicy
+	for i := range policies {
+		p := &policies[i]
+		if containsString(p.Spec.Sources.Namespaces, sourceNamespace) || p.Spec.Sources.NamespaceSelector != nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// policiesForKind narrows a policy set to those allowlisting the source kind.
+func policiesForKind(policies []*r8rv1alpha1.ReplicationPolicy, kind string) []*r8rv1alpha1.ReplicationPolicy {
+	var out []*r8rv1alpha1.ReplicationPolicy
+	for _, p := range policies {
+		if containsString(p.Spec.Sources.Kinds, kind) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// conflictPolicyWarning renders an advisory warning when the request asks for
+// a conflict policy (`r8r.io/conflict-policy`) that no policy able to match
+// this source permits. It is a WARNING, never a denial: the request is
+// otherwise valid and replicates normally — only conflicts fall back to the
+// weaker of the two keys, and the authoritative intersection happens per
+// target at reconcile time. Returns "" when the request asks for nothing more
+// than Fail or when some candidate policy could grant it.
+func conflictPolicyWarning(policies []r8rv1alpha1.ReplicationPolicy, kind, sourceNamespace string, req *parsedRequest) string {
+	if req.conflictPolicy == "" || req.conflictPolicy == r8rv1alpha1.ConflictPolicyFail {
+		return ""
+	}
+	for _, p := range policiesForKind(policiesForSourceNamespace(policies, sourceNamespace), kind) {
+		if slices.Contains(p.Spec.Options.AllowedConflictPolicies, req.conflictPolicy) {
+			return ""
+		}
+	}
+	return fmt.Sprintf(
+		"%s is %q, but no ReplicationPolicy that could match this source permits it; "+
+			"conflicts will be handled with the weaker of the request and the policy grant",
+		annConflictPolicy, req.conflictPolicy)
 }
 
 // jointlySatisfiable reports whether some cluster label set could match both

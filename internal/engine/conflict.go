@@ -20,9 +20,9 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/types"
 
 	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
+	"github.com/moeritze/k8s-r8r/internal/annotations"
 )
 
 // ConflictAction is the engine's verdict about an object that already exists
@@ -51,31 +51,62 @@ type ConflictDecision struct {
 	Message string
 }
 
-// EffectiveConflictPolicy reduces the policy-granted conflict policies to the
-// single policy the engine acts with: the strongest granted one, ranked
-// Overwrite > Adopt > Fail, defaulting to Fail.
+// conflictPolicyStrength ranks the conflict policies by how much they let the
+// engine do to an object it did not create: Fail touches nothing, Adopt takes
+// ownership of byte-identical content, Overwrite replaces the payload.
+// Unknown values rank as Fail, so nothing the engine cannot name is ever
+// treated as a grant.
+func conflictPolicyStrength(p r8rv1alpha1.ConflictPolicy) int {
+	switch p {
+	case r8rv1alpha1.ConflictPolicyOverwrite:
+		return 2
+	case r8rv1alpha1.ConflictPolicyAdopt:
+		return 1
+	case r8rv1alpha1.ConflictPolicyFail:
+		return 0
+	default:
+		return 0
+	}
+}
+
+// EffectiveConflictPolicy is the two-key turn of the conflict contract: the
+// engine acts on the WEAKER of what the request asks for and what policy
+// permits, ranked Overwrite > Adopt > Fail.
 //
-// Rationale (v1): ResolvedTarget carries no request-side conflict field yet,
-// so there is nothing to intersect with — the effective policy is purely
-// what admins granted via allowedConflictPolicies (default [Fail]). Granting
-// Overwrite in a policy is therefore an explicit admin decision to have
-// conflicts overwritten for the requests that policy permits. When a
-// request-side field is added later, the effective policy becomes the
-// requested one intersected with the grant, and this function only gains an
-// argument — no contract change.
-func EffectiveConflictPolicy(allowed []r8rv1alpha1.ConflictPolicy) r8rv1alpha1.ConflictPolicy {
-	eff := r8rv1alpha1.ConflictPolicyFail
+//   - requested is the source object's `r8r.io/conflict-policy` annotation
+//     (absent means Fail — a request that says nothing consents to nothing).
+//   - allowed is the union of `allowedConflictPolicies` across the policies
+//     that permitted this target; its strongest member is the grant. The
+//     union always contains Fail, so the grant is never weaker than Fail.
+//
+// Both keys must therefore turn before the engine touches an object it did
+// not create: an admin grant alone no longer overwrites anything, and a
+// request asking for Overwrite gets no more than its policies permit.
+func EffectiveConflictPolicy(
+	requested r8rv1alpha1.ConflictPolicy,
+	allowed []r8rv1alpha1.ConflictPolicy,
+) r8rv1alpha1.ConflictPolicy {
+	grant := r8rv1alpha1.ConflictPolicyFail
 	for _, p := range allowed {
-		switch p {
-		case r8rv1alpha1.ConflictPolicyOverwrite:
-			return r8rv1alpha1.ConflictPolicyOverwrite
-		case r8rv1alpha1.ConflictPolicyAdopt:
-			eff = r8rv1alpha1.ConflictPolicyAdopt
-		case r8rv1alpha1.ConflictPolicyFail:
-			// baseline; nothing to raise
+		if conflictPolicyStrength(p) > conflictPolicyStrength(grant) {
+			grant = p
 		}
 	}
-	return eff
+	if conflictPolicyStrength(requested) < conflictPolicyStrength(grant) {
+		return normalizeConflictPolicy(requested)
+	}
+	return grant
+}
+
+// normalizeConflictPolicy maps anything the engine cannot name onto Fail, so
+// the returned policy is always one the switch in DecideConflict handles.
+func normalizeConflictPolicy(p r8rv1alpha1.ConflictPolicy) r8rv1alpha1.ConflictPolicy {
+	switch p {
+	case r8rv1alpha1.ConflictPolicyOverwrite, r8rv1alpha1.ConflictPolicyAdopt:
+		return p
+	default:
+		return r8rv1alpha1.ConflictPolicyFail
+	}
 }
 
 // DecideConflict classifies an existing object found at a replica's intended
@@ -86,14 +117,22 @@ func EffectiveConflictPolicy(allowed []r8rv1alpha1.ConflictPolicy) r8rv1alpha1.C
 //   - the object is managed by k8s-r8r for a DIFFERENT source → always
 //     ActionFail: the engine never steals replicas from another replication,
 //     regardless of the effective conflict policy;
-//   - otherwise the effective conflict policy (EffectiveConflictPolicy over
-//     the policy grants) decides: Fail reports, Adopt requires content-hash
-//     equality, Overwrite takes over.
+//   - otherwise the effective conflict policy decides: Fail reports, Adopt
+//     requires content-hash equality, Overwrite takes over. The effective
+//     policy is the WEAKER of the source's `r8r.io/conflict-policy` request
+//     and the policy grant (EffectiveConflictPolicy) — both keys must turn.
 //
-// Messages never contain object payloads — only names and hashes.
-func DecideConflict(existing *unstructured.Unstructured, sourceUID types.UID, sourceHash string, allowed []r8rv1alpha1.ConflictPolicy) ConflictDecision {
+// src is the hub source object; its UID identifies this replication's own
+// replicas and its annotations carry the request-side key. Messages never
+// contain object payloads — only names, hashes, and policy names.
+func DecideConflict(
+	existing *unstructured.Unstructured,
+	src *unstructured.Unstructured,
+	sourceHash string,
+	allowed []r8rv1alpha1.ConflictPolicy,
+) ConflictDecision {
 	labels := existing.GetLabels()
-	if IsManagedReplica(labels, sourceUID) {
+	if IsManagedReplica(labels, src.GetUID()) {
 		return ConflictDecision{Action: ActionApply}
 	}
 	if labels[LabelManagedBy] == ManagedByValue {
@@ -105,7 +144,8 @@ func DecideConflict(existing *unstructured.Unstructured, sourceUID types.UID, so
 		}
 	}
 
-	switch EffectiveConflictPolicy(allowed) {
+	requested := annotations.RequestedConflictPolicy(src.GetAnnotations())
+	switch EffectiveConflictPolicy(requested, allowed) {
 	case r8rv1alpha1.ConflictPolicyOverwrite:
 		return ConflictDecision{
 			Action:  ActionOverwrite,
@@ -127,8 +167,44 @@ func DecideConflict(existing *unstructured.Unstructured, sourceUID types.UID, so
 		}
 	default:
 		return ConflictDecision{
-			Action:  ActionFail,
-			Message: "unmanaged object already exists at the replica's name (conflict policy Fail)",
+			Action: ActionFail,
+			Message: "unmanaged object already exists at the replica's name (effective conflict policy Fail): " +
+				explainConflictKeys(requested, allowed),
 		}
+	}
+}
+
+// explainConflictKeys renders which of the two keys did not turn, so an
+// operator reading a Conflict condition or event can tell a missing
+// per-object opt-in apart from a policy that never granted the escalation.
+// It names annotation keys and policy names only — never payload.
+func explainConflictKeys(requested r8rv1alpha1.ConflictPolicy, allowed []r8rv1alpha1.ConflictPolicy) string {
+	grant := r8rv1alpha1.ConflictPolicyFail
+	for _, p := range allowed {
+		if conflictPolicyStrength(p) > conflictPolicyStrength(grant) {
+			grant = p
+		}
+	}
+	requestedAsked := conflictPolicyStrength(requested) > 0
+	granted := conflictPolicyStrength(grant) > 0
+
+	switch {
+	case !requestedAsked && !granted:
+		return fmt.Sprintf(
+			"the request does not set %s and no matching ReplicationPolicy permits more than %s",
+			annotations.KeyConflictPolicy, r8rv1alpha1.ConflictPolicyFail)
+	case !requestedAsked:
+		return fmt.Sprintf(
+			"policy permits up to %s, but the request does not set %s (absent means %s)",
+			grant, annotations.KeyConflictPolicy, annotations.DefaultConflictPolicy)
+	case !granted:
+		return fmt.Sprintf(
+			"the request asks for %s, but no matching ReplicationPolicy permits more than %s",
+			requested, r8rv1alpha1.ConflictPolicyFail)
+	default:
+		// Both keys turned above Fail; the only way to land here is an Adopt
+		// grant meeting an Adopt request on differing content, which the
+		// Adopt branch reports instead. Keep a truthful fallback anyway.
+		return fmt.Sprintf("the request asks for %s and policy permits up to %s", requested, grant)
 	}
 }

@@ -10,8 +10,44 @@ release; they are called out under **Changed** or **Removed**.
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: the conflict policy now needs consent from the request as well
+  as from policy** ([#34](https://github.com/moeritze/k8s-r8r/issues/34)).
+  `Overwrite` and `Adopt` used to be decided by `allowedConflictPolicies`
+  alone, even though the spec and `docs/security.md` both described a two-key
+  turn. The engine now acts on the **weaker** of the new
+  `r8r.io/conflict-policy` request annotation and the policy grant, ranked
+  `Fail` < `Adopt` < `Overwrite`.
+
+  **What breaks.** A source that relies on a policy-granted `Overwrite` or
+  `Adopt` and carries no `r8r.io/conflict-policy` annotation now reports
+  `Conflict` for that target instead of taking the existing object over. An
+  absent annotation means `Fail`: a request that says nothing consents to
+  nothing.
+
+  **Migration.** Add the annotation to the sources that should have it:
+
+  ```yaml
+  metadata:
+    annotations:
+      r8r.io/conflict-policy: "Overwrite"   # or "Adopt"
+  ```
+
+  Nothing is deleted or overwritten by the change — the new failure mode is
+  "did not take over", never the reverse — and the `Conflict` condition and
+  event name the missing annotation, so affected targets are self-diagnosing
+  via `kubectl describe replication`.
+
 ### Added
 
+- **`r8r.io/conflict-policy`** request annotation (`Fail` / `Adopt` /
+  `Overwrite`, default `Fail`) — the request's half of the conflict two-key
+  turn. It joins the closed set of `r8r.io/*` keys, so a malformed value is
+  rejected by the controller and denied by the advisory webhook with a message
+  naming the annotation. A value no matching policy could grant is admitted
+  with a warning rather than denied: such a request replicates normally and
+  only its conflict handling falls back to the weaker key.
 - **`--strip-metadata-keys`** manager flag (chart value `stripMetadataKeys`)
   extends the stripped-metadata denylist with fleet-specific keys.
   Comma-separated and repeatable; a trailing `/` makes an entry a prefix
