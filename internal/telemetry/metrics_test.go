@@ -34,6 +34,7 @@ func exerciseAll() {
 	IncRevocation("retain")
 	IncRevocation("delete")
 	IncDriftEvent("spoke-a")
+	IncDriftCorrection("spoke-a")
 	IncSpokeBootstrap(true)
 	IncSpokeBootstrap(false)
 	IncTokenRotation(true)
@@ -112,6 +113,7 @@ func TestMetricInventoryComplete(t *testing.T) {
 		"k8s_r8r_conflicts_total",
 		"k8s_r8r_revocations_total",
 		"k8s_r8r_drift_events_total",
+		"k8s_r8r_drift_corrections_total",
 		"k8s_r8r_cluster_connectivity",
 		"k8s_r8r_clusters",
 		"k8s_r8r_discovery_up",
