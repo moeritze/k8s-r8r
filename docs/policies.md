@@ -8,7 +8,9 @@ admission webhook only mirrors it for apply-time feedback.
 ## The model in four rules
 
 1. **Default deny.** With no policies present, nothing replicates —
-   requests are reported `PolicyDenied`.
+   requests are reported `PolicyDenied` on the `Replication`'s
+   `TargetsResolved` condition (see [What a denial looks like in
+   status](#what-a-denial-looks-like-in-status)).
 2. **Allowlist only.** There are no deny rules. Denying is done by not
    allowing.
 3. **All dimensions, one policy.** A target is permitted only when a
@@ -105,6 +107,56 @@ Policy is re-evaluated on every reconcile, so tightening a policy acts on
 existing replicas immediately: targets that lose permission are handled
 per the effective `revocationPolicy` resolved from the policies that
 *previously* allowed them. There is no "grandfathering".
+
+## What a denial looks like in status
+
+Events expire; status is what monitoring reads. A `Replication` carries
+two conditions that answer two different questions:
+
+| Condition | Written by | Question it answers |
+| --- | --- | --- |
+| `TargetsResolved` | request controller | Did the request resolve to any target at all, and if not, why? |
+| `Ready` | replication engine | Is everything the engine was asked to do actually done? |
+
+For a denied request that means:
+
+```yaml
+status:
+  summary:
+    desiredTargets: 0
+    readyTargets: 0
+    failedTargets: 0
+  conditions:
+  - type: TargetsResolved
+    status: "False"
+    reason: PolicyDenied           # or NoTargets — see below
+    message: no ReplicationPolicy allowlists source namespace "foo" (sourceNamespace)
+  - type: Ready
+    status: "False"
+    reason: NoTargets
+    message: no targets resolved; nothing is being replicated
+```
+
+The two `TargetsResolved` failure reasons distinguish the two ways a
+request can come to nothing:
+
+- **`PolicyDenied`** — candidate targets existed and policy refused them.
+  Fix the policy (or the request's target dimensions).
+- **`NoTargets`** — the request produced no candidate at all: the
+  `r8r.io/target-clusters` selector matched no *ready* cluster. Usually a
+  typo in the selector, a label missing on the cluster inventory entry, or
+  a cluster that has not become ready. Policy was never consulted, so
+  there is no denial event to look for.
+
+`Ready` is the one to alert on: a request that asked for replication and
+got none reports `Ready: False`, reason `NoTargets`, whether the cause was
+a denial, a revocation, or an empty selector. Replicating nothing is not
+success.
+
+> **Upgrading from 0.1.0-alpha.1:** these replications previously reported
+> `Ready: True` with `0/0 targets ready`. They flip to `Ready: False` on
+> the first reconcile after upgrade. Nothing about what is replicated
+> changes — only whether the object admits it.
 
 ## Recipes
 

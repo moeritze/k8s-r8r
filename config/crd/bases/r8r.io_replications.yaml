@@ -141,8 +141,9 @@ spec:
               conditions:
                 description: |-
                   Conditions holds the aggregate conditions. "Ready" summarizes the whole
-                  fanout; reasons include PolicyDenied, PolicyRevoked, NotAuthoritative,
-                  and Conflict.
+                  fanout; reasons include NoTargets, PolicyRevoked, NotAuthoritative, and
+                  Conflict. "TargetsResolved" reports whether the request resolved to any
+                  target at all; reasons include PolicyDenied and NoTargets.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

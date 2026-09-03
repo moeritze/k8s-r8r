@@ -25,9 +25,12 @@ limitations under the License.
 //   - Parse and validate the annotation contract (internal/annotations).
 //   - Resolve targets: annotation cluster selector × discovered cluster
 //     inventory × ReplicationPolicy evaluation (internal/policy). Denied
-//     targets are excluded from spec.resolvedTargets and reported: a
-//     PolicyDenied Ready condition when nothing is allowed, plus a warning
-//     event on the source naming the denied dimension.
+//     targets are excluded from spec.resolvedTargets and reported on the
+//     Replication's TargetsResolved condition (False/PolicyDenied when
+//     everything was denied, False/NoTargets when nothing was even a
+//     candidate), plus a warning event on the source naming the denied
+//     dimension. The Ready condition belongs to the engine and is never
+//     written here.
 //   - Mark hand-authored Replication objects (no owning source reference)
 //     with a NotAuthoritative condition and never act on them.
 //   - Emit an explanatory event on watched-but-not-allowlisted kinds that
@@ -504,7 +507,7 @@ func (s *sourceReconciler) materialize(ctx context.Context,
 		}
 	}
 
-	return s.reportDenial(ctx, key, resolved, denied)
+	return s.reportTargetResolution(ctx, key, resolved, denied)
 }
 
 // resolveTargets computes the request's fanout: discovered ready clusters
@@ -608,34 +611,61 @@ func (s *sourceReconciler) desiredReplication(obj *metav1.PartialObjectMetadata,
 	}
 }
 
-// reportDenial maintains the PolicyDenied condition on the Replication: set
-// (Ready=False, reason PolicyDenied) when policy denied every resolved
-// target, cleared again once targets are allowed. Status writes are skipped
-// when nothing changed.
-func (s *sourceReconciler) reportDenial(ctx context.Context, key types.NamespacedName,
+// reportTargetResolution maintains the TargetsResolved condition on the
+// Replication — the request controller's verdict on the question "did this
+// request resolve to anything?":
+//
+//   - True (TargetsResolved) once at least one (cluster, namespace) pair
+//     survived the selector and policy evaluation;
+//   - False (PolicyDenied) when candidate targets existed but policy denied
+//     every one of them;
+//   - False (NoTargets) when the request produced no candidate targets at all
+//     — a selector that matches no ready cluster, or no target namespace.
+//     That case is silent otherwise: with nothing denied there is no denial
+//     event either, so without this condition a typo'd selector looks exactly
+//     like a healthy fanout (issue #27).
+//
+// This condition is deliberately NOT Ready. Ready is owned by the engine,
+// which rewrites it from per-target outcomes on every reconcile; a request
+// controller that also wrote Ready would have its verdict overwritten, and —
+// because this controller watches Replications — the two writers would
+// ping-pong the status forever (design D8: no status churn when nothing
+// changed). Status writes are skipped when nothing changed.
+func (s *sourceReconciler) reportTargetResolution(ctx context.Context, key types.NamespacedName,
 	resolved []r8rv1alpha1.ResolvedTarget, denied []policy.Decision) error {
 	rep := &r8rv1alpha1.Replication{}
 	if err := s.Get(ctx, key, rep); err != nil {
 		return client.IgnoreNotFound(err)
 	}
 
-	changed := false
-	if len(resolved) == 0 && len(denied) > 0 {
-		changed = meta.SetStatusCondition(&rep.Status.Conditions, metav1.Condition{
-			Type:               r8rv1alpha1.ReplicationConditionReady,
-			Status:             metav1.ConditionFalse,
-			Reason:             r8rv1alpha1.ReasonPolicyDenied,
-			Message:            denied[0].Reason,
-			ObservedGeneration: rep.Generation,
-		})
-	} else if cond := meta.FindStatusCondition(rep.Status.Conditions,
-		r8rv1alpha1.ReplicationConditionReady); cond != nil &&
-		cond.Reason == r8rv1alpha1.ReasonPolicyDenied {
-		// Denial lifted: drop the stale condition; the engine owns Ready now.
-		changed = meta.RemoveStatusCondition(&rep.Status.Conditions,
-			r8rv1alpha1.ReplicationConditionReady)
+	cond := metav1.Condition{
+		Type:               r8rv1alpha1.ReplicationConditionTargetsResolved,
+		ObservedGeneration: rep.Generation,
 	}
-	if !changed {
+	switch {
+	case len(resolved) > 0:
+		cond.Status = metav1.ConditionTrue
+		cond.Reason = r8rv1alpha1.ReasonTargetsResolved
+		cond.Message = fmt.Sprintf("%d target cluster(s) resolved", len(resolved))
+		if len(denied) > 0 {
+			cond.Message = fmt.Sprintf("%s, %d target(s) denied by policy",
+				cond.Message, len(denied))
+		}
+	case len(denied) > 0:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = r8rv1alpha1.ReasonPolicyDenied
+		cond.Message = denied[0].Reason
+		if len(denied) > 1 {
+			cond.Message = fmt.Sprintf("%s (and %d more denied targets)",
+				cond.Message, len(denied)-1)
+		}
+	default:
+		cond.Status = metav1.ConditionFalse
+		cond.Reason = r8rv1alpha1.ReasonNoTargets
+		cond.Message = "no ready cluster matched the target-clusters selector"
+	}
+
+	if !meta.SetStatusCondition(&rep.Status.Conditions, cond) {
 		return nil
 	}
 	return s.Status().Update(ctx, rep)

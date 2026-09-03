@@ -346,8 +346,13 @@ func getReplication(namespace, replicationName string) (*r8rv1alpha1.Replication
 
 // readyCondition returns the Ready condition of a Replication, or nil.
 func readyCondition(rep *r8rv1alpha1.Replication) *metav1.Condition {
+	return conditionOfType(rep, r8rv1alpha1.ReplicationConditionReady)
+}
+
+// conditionOfType returns the named condition of a Replication, or nil.
+func conditionOfType(rep *r8rv1alpha1.Replication, condType string) *metav1.Condition {
 	for i := range rep.Status.Conditions {
-		if rep.Status.Conditions[i].Type == r8rv1alpha1.ReplicationConditionReady {
+		if rep.Status.Conditions[i].Type == condType {
 			return &rep.Status.Conditions[i]
 		}
 	}

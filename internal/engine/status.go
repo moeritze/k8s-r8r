@@ -42,6 +42,10 @@ const (
 	ReasonSourceMissing = "SourceMissing"
 	// ReasonAllTargetsReady is the Ready=True reason.
 	ReasonAllTargetsReady = "AllTargetsReady"
+	// ReasonNoTargets is the Ready=False reason for a Replication that
+	// resolved to zero targets. Re-exported from the API package so engine
+	// code reads uniformly against the local reason space.
+	ReasonNoTargets = r8rv1alpha1.ReasonNoTargets
 
 	// ConditionPolicyRevoked is set True while at least one target is
 	// revoked with revocationPolicy Retain: its replicas stay but are no
@@ -85,6 +89,11 @@ var reasonPriority = []string{
 // maxNonReadyTargets with an overflow counter, and stable transition times
 // (an entry keeps its LastTransitionTime while its reason is unchanged, so
 // unchanged statuses stay deep-equal and writes can be skipped).
+//
+// Ready is derived here and only here: True when every desired target is
+// ready, False when any target failed, and False/NoTargets when a live
+// Replication has no desired targets at all. Conditions owned by other
+// controllers (TargetsResolved, NotAuthoritative) are carried over untouched.
 func buildStatus(
 	rep *r8rv1alpha1.Replication,
 	sourceHash string,
@@ -150,11 +159,22 @@ func buildStatus(
 		Type:               r8rv1alpha1.ReplicationConditionReady,
 		ObservedGeneration: rep.Generation,
 	}
-	if failed == 0 {
+	switch {
+	case failed == 0 && desired == 0 && rep.DeletionTimestamp.IsZero():
+		// Replication was requested but resolved to nothing: zero targets
+		// means zero failures, which must not read as success (issue #27).
+		// A denied policy, a revoked one, and a typo'd cluster selector all
+		// land here, and the TargetsResolved condition written by the request
+		// controller says which. Excluded while the object is being deleted:
+		// a Replication on its way out legitimately has no desired targets.
+		readyCond.Status = metav1.ConditionFalse
+		readyCond.Reason = ReasonNoTargets
+		readyCond.Message = "no targets resolved; nothing is being replicated"
+	case failed == 0:
 		readyCond.Status = metav1.ConditionTrue
 		readyCond.Reason = ReasonAllTargetsReady
 		readyCond.Message = fmt.Sprintf("%d/%d targets ready", ready, desired)
-	} else {
+	default:
 		readyCond.Status = metav1.ConditionFalse
 		readyCond.Reason = dominantReason(states, firstReason)
 		readyCond.Message = fmt.Sprintf("%d/%d targets ready, %d not ready", ready, desired, failed)

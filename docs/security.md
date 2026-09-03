@@ -210,6 +210,42 @@ name the missing key.
 renaming does not exist: a silent rename would break workloads that mount
 by name with no error surfaced anywhere.
 
+## Detecting replica tampering on a spoke
+
+The engine restores any replica whose content no longer matches its source.
+That restore is reported, so a corrective write is distinguishable from a
+quiet, healthy reconcile:
+
+| Signal | Fires when |
+|---|---|
+| `k8s_r8r_drift_corrections_total{cluster}` | a replica's **content** diverged and was rewritten |
+| `DriftCorrected` Warning event on the `Replication` | same, with the replica's cluster/namespace/name and both `sha256:` hashes |
+| `k8s_r8r_drift_events_total{cluster}` | a spoke informer event enqueued a reconcile — **watch traffic**, apply echoes included |
+
+Do not alert on `k8s_r8r_drift_events_total`: it rises on every legitimate
+source update. `k8s_r8r_drift_corrections_total` is the tamper signal — a
+non-zero value always means a replica's payload was actually wrong.
+
+```sh
+kubectl -n <ns> describe replication <name> | grep DriftCorrected
+```
+
+Two caveats when reading these:
+
+- **Events coalesce.** Identical (object, reason, message) repeats are
+  suppressed for five minutes, so drift recurring with the same hashes shows
+  up as *one* event. Read the rate off the metric, which is not rate-limited.
+  A steadily climbing counter with a single event is the signature of an
+  ongoing fight — a human editing the replica in a loop, or a second
+  replication controller claiming the same object.
+- **A stale `r8r.io/source-hash` annotation over unchanged content is not
+  drift** and is repaired silently. No replicated material differed, and that
+  state is produced fleet-wide by any change to the hashing rules — counting
+  it would make the correction metric fire on operator upgrades.
+
+The event and the metric never carry payload: content is compared by hash
+only (see *Secret-safe telemetry* above).
+
 ## Supply chain
 
 A component that reads every Secret in a fleet is worth verifying before you
