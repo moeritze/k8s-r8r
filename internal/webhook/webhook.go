@@ -39,7 +39,8 @@ limitations under the License.
 //
 //   - Annotation well-formedness: r8r.io/replicate boolean, target-clusters
 //     label selector parses (explicit "*" rejected per spec), target-namespaces
-//     are valid namespace names, target-name is a valid object name. Malformed
+//     are valid namespace names, target-name is a valid object name,
+//     conflict-policy is one of Fail/Adopt/Overwrite. Malformed
 //     values are DENIED with a message naming the exact annotation. Unknown
 //     r8r.io/* keys produce a WARNING, not a rejection (typos should not block
 //     writes the controller would process fine; the known-key set may also grow
@@ -50,6 +51,10 @@ limitations under the License.
 //     clusterSelectors. A write is denied only when NO policy could ever allow
 //     the request regardless of which clusters exist. Denial messages name the
 //     failing dimension using the same identifiers as internal/policy.
+//   - Conflict-policy satisfiability: a requested r8r.io/conflict-policy that
+//     no candidate policy permits produces a WARNING, never a denial — such a
+//     request replicates fine and only its conflict handling falls back to the
+//     weaker key.
 //
 // Reconcile time only (authoritative, internal/policy.Evaluate):
 //
@@ -76,6 +81,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -85,6 +91,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
+	"github.com/moeritze/k8s-r8r/internal/annotations"
 	"github.com/moeritze/k8s-r8r/internal/telemetry"
 )
 
@@ -160,6 +167,12 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 				fmt.Sprintf("k8s-r8r advisory validation skipped: listing ReplicationPolicies: %v", err))...)
 	}
 
+	// Advisory only: an unsatisfiable conflict-policy request still replicates,
+	// it just gets the weaker of the two keys when a conflict occurs.
+	if w := conflictPolicyWarning(policies.Items, req.Kind.Kind, req.Namespace, parsed); w != "" {
+		warnings = append(warnings, w)
+	}
+
 	if d := checkPolicies(policies.Items, req.Kind.Kind, req.Namespace, parsed); d != nil {
 		telemetry.IncWebhookDenial(d.dimension)
 		return admission.Denied(fmt.Sprintf(
@@ -183,8 +196,8 @@ func warningsFor(p *parsedRequest) []string {
 	keys := append([]string(nil), p.unknownKeys...)
 	slices.Sort(keys)
 	for _, k := range keys {
-		out = append(out, fmt.Sprintf("unknown annotation %q is ignored by k8s-r8r (known keys: %s, %s, %s, %s)",
-			k, annReplicate, annTargetClusters, annTargetNamespaces, annTargetName))
+		out = append(out, fmt.Sprintf("unknown annotation %q is ignored by k8s-r8r (known keys: %s)",
+			k, strings.Join(annotations.RequestKeys(), ", ")))
 	}
 	if p.emptyClusterSelector {
 		out = append(out, fmt.Sprintf("%s is empty: an empty selector selects no target clusters", annTargetClusters))

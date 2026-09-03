@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
+	"github.com/moeritze/k8s-r8r/internal/annotations"
 )
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
@@ -204,6 +205,23 @@ func TestReconcile_ConflictFailDefault(t *testing.T) {
 	}
 }
 
+// requestConflictPolicy sets the request-side half of the conflict two-key
+// turn on the fixture's source object (issue #34): the engine acts on the
+// weaker of this annotation and the policy grant, so conflict tests that want
+// Adopt or Overwrite must ask for it here as well as grant it in policy.
+func (f *testFixture) requestConflictPolicy(cp r8rv1alpha1.ConflictPolicy) {
+	f.t.Helper()
+	ann := f.secret.GetAnnotations()
+	if ann == nil {
+		ann = map[string]string{}
+	}
+	ann[annotations.KeyConflictPolicy] = string(cp)
+	f.secret.SetAnnotations(ann)
+	if err := hubClient.Update(testCtx, f.secret); err != nil {
+		f.t.Fatalf("annotating source with %s: %v", annotations.KeyConflictPolicy, err)
+	}
+}
+
 // Spec "Adopt on identical content": labels + hash annotation added, payload
 // untouched.
 func TestReconcile_ConflictAdopt(t *testing.T) {
@@ -213,6 +231,7 @@ func TestReconcile_ConflictAdopt(t *testing.T) {
 			r8rv1alpha1.ConflictPolicyFail, r8rv1alpha1.ConflictPolicyAdopt,
 		}
 	})
+	f.requestConflictPolicy(r8rv1alpha1.ConflictPolicyAdopt)
 
 	// Identical content, plus a marker field proving no payload rewrite.
 	existing := unmanagedObject(b64("hunter2"))
@@ -243,6 +262,7 @@ func TestReconcile_ConflictAdopt(t *testing.T) {
 			r8rv1alpha1.ConflictPolicyFail, r8rv1alpha1.ConflictPolicyAdopt,
 		}
 	})
+	f2.requestConflictPolicy(r8rv1alpha1.ConflictPolicyAdopt)
 	other := unmanagedObject(b64("different"))
 	other.SetNamespace(f2.ns)
 	f2.transport.put("spoke-a", other)
@@ -255,7 +275,8 @@ func TestReconcile_ConflictAdopt(t *testing.T) {
 	}
 }
 
-// Design D7 Overwrite: policy-granted takeover replaces the payload.
+// Design D7 Overwrite: takeover replaces the payload when BOTH keys turn —
+// the policy grants Overwrite and the request asks for it.
 func TestReconcile_ConflictOverwrite(t *testing.T) {
 	f := newFixture(t, "hunter2", []r8rv1alpha1.ResolvedTarget{{ClusterName: "spoke-a"}}, "spoke-a")
 	f.policy(nil, func(p *r8rv1alpha1.ReplicationPolicy) {
@@ -263,6 +284,7 @@ func TestReconcile_ConflictOverwrite(t *testing.T) {
 			r8rv1alpha1.ConflictPolicyFail, r8rv1alpha1.ConflictPolicyOverwrite,
 		}
 	})
+	f.requestConflictPolicy(r8rv1alpha1.ConflictPolicyOverwrite)
 	existing := unmanagedObject(b64("victim-data"))
 	existing.SetNamespace(f.ns)
 	f.transport.put("spoke-a", existing)
@@ -281,6 +303,41 @@ func TestReconcile_ConflictOverwrite(t *testing.T) {
 	}
 	if !eventsContaining(f.drainEvents(), "ConflictOverwritten") {
 		t.Error("no ConflictOverwritten event")
+	}
+}
+
+// Issue #34: a policy grant is only one of the two keys. Without the
+// request-side `r8r.io/conflict-policy` opt-in, an Overwrite grant must NOT
+// take over the victim object, and the conflict message must say which key is
+// missing so the operator can fix it.
+func TestReconcile_ConflictOverwriteNeedsRequestConsent(t *testing.T) {
+	f := newFixture(t, "hunter2", []r8rv1alpha1.ResolvedTarget{{ClusterName: "spoke-a"}}, "spoke-a")
+	f.policy(nil, func(p *r8rv1alpha1.ReplicationPolicy) {
+		p.Spec.Options.AllowedConflictPolicies = []r8rv1alpha1.ConflictPolicy{
+			r8rv1alpha1.ConflictPolicyFail, r8rv1alpha1.ConflictPolicyOverwrite,
+		}
+	})
+	// Deliberately no requestConflictPolicy call: the source says nothing.
+	existing := unmanagedObject(b64("victim-data"))
+	existing.SetNamespace(f.ns)
+	f.transport.put("spoke-a", existing)
+
+	_, rep := f.reconcile()
+
+	if got := replicaPassword(t, f.replica("spoke-a", f.ns)); got != b64("victim-data") {
+		t.Errorf("victim object was overwritten without request consent: %q", got)
+	}
+	if rep.Status.Summary.FailedTargets != 1 {
+		t.Errorf("summary = %+v, want one failed target", rep.Status.Summary)
+	}
+	if len(rep.Status.NonReadyTargets) != 1 || rep.Status.NonReadyTargets[0].Reason != r8rv1alpha1.ReasonConflict {
+		t.Fatalf("nonReadyTargets = %+v, want one Conflict entry", rep.Status.NonReadyTargets)
+	}
+	if msg := rep.Status.NonReadyTargets[0].Message; !strings.Contains(msg, annotations.KeyConflictPolicy) {
+		t.Errorf("conflict message %q does not name the missing request key", msg)
+	}
+	if !eventsContaining(f.drainEvents(), r8rv1alpha1.ReasonConflict) {
+		t.Error("no Conflict event emitted")
 	}
 }
 

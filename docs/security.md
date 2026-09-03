@@ -190,8 +190,22 @@ the manifests may work but are unsupported.
 
 ## Conflict handling as a security control — design D7
 
-`Overwrite` can replace a victim cluster's existing secret, so it
-requires both the request and a policy to permit it (default is `Fail`).
+`Overwrite` can replace a victim cluster's existing secret, so it requires
+**both keys to turn**: the source must ask for it
+(`r8r.io/conflict-policy: "Overwrite"`) *and* a matching `ReplicationPolicy`
+must permit it (`allowedConflictPolicies`). The engine acts on the weaker of
+the two, ranked `Fail` < `Adopt` < `Overwrite`, and both sides default to
+`Fail` — an absent annotation and an unset policy option each mean "consents
+to nothing".
+
+Concretely: granting `Overwrite` in a policy does not grant it to every
+request that policy permits, and annotating a source does not obtain more
+than the policy allows. Someone who can annotate a source in an allowed
+namespace can therefore never escalate past the admin's grant, and an admin's
+grant never applies to a source that did not opt in. When only one key turns
+and a conflict actually occurs, the target's `Conflict` condition and event
+name the missing key.
+
 `Adopt` only takes ownership when content hashes already match. Automatic
 renaming does not exist: a silent rename would break workloads that mount
 by name with no error surfaced anywhere.

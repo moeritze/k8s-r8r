@@ -18,10 +18,13 @@ package annotations
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/labels"
+
+	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
 )
 
 // selProd is the selector string used across the valid-request cases.
@@ -234,16 +237,88 @@ func TestParseAggregatesAllErrors(t *testing.T) {
 		KeyTargetClusters:   "*",
 		KeyTargetNamespaces: "a,a",
 		KeyTargetName:       "UPPER",
+		KeyConflictPolicy:   "Yolo",
 	})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	for _, want := range []string{
-		KeyReplicate, KeyTargetClusters, KeyTargetNamespaces, KeyTargetName,
+		KeyReplicate, KeyTargetClusters, KeyTargetNamespaces, KeyTargetName, KeyConflictPolicy,
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("aggregate error missing %q: %v", want, err)
 		}
+	}
+}
+
+// TestParseConflictPolicy covers the request side of the conflict two-key turn
+// (issue #34): the closed value set, and the deliberate default when the
+// annotation says nothing.
+func TestParseConflictPolicy(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		absent  bool
+		want    r8rv1alpha1.ConflictPolicy
+		wantErr string
+	}{
+		{name: "absent defaults to Fail", absent: true, want: r8rv1alpha1.ConflictPolicyFail},
+		{name: "empty defaults to Fail", value: "  ", want: r8rv1alpha1.ConflictPolicyFail},
+		{name: "explicit Fail", value: "Fail", want: r8rv1alpha1.ConflictPolicyFail},
+		{name: "Adopt", value: "Adopt", want: r8rv1alpha1.ConflictPolicyAdopt},
+		{name: "Overwrite", value: "Overwrite", want: r8rv1alpha1.ConflictPolicyOverwrite},
+		{name: "surrounding space tolerated", value: " Overwrite ", want: r8rv1alpha1.ConflictPolicyOverwrite},
+		{name: "wrong case rejected", value: "overwrite", wantErr: "expected one of"},
+		{name: "unknown value rejected", value: "Yolo", wantErr: "expected one of"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ann := map[string]string{KeyReplicate: ValueTrue, KeyTargetClusters: selProd}
+			if !tc.absent {
+				ann[KeyConflictPolicy] = tc.value
+			}
+			req, err := Parse(ann)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want containing %q", err, tc.wantErr)
+				}
+				if got := RequestedConflictPolicy(ann); got != DefaultConflictPolicy {
+					t.Errorf("RequestedConflictPolicy on a malformed value = %v, want %v",
+						got, DefaultConflictPolicy)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if req.ConflictPolicy != tc.want {
+				t.Errorf("ConflictPolicy = %q, want %q", req.ConflictPolicy, tc.want)
+			}
+			if got := RequestedConflictPolicy(ann); got != tc.want {
+				t.Errorf("RequestedConflictPolicy = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The closed-set check must keep rejecting typos, including near-misses of
+// the new key, and the hint must list every valid key.
+func TestConflictPolicyKeyIsClosedSet(t *testing.T) {
+	_, err := Parse(map[string]string{
+		KeyReplicate:            ValueTrue,
+		"r8r.io/conflict-polic": "Overwrite",
+	})
+	if err == nil {
+		t.Fatal("expected the typo to be rejected")
+	}
+	if !strings.Contains(err.Error(), KeyConflictPolicy) {
+		t.Errorf("unknown-key hint does not list %q: %v", KeyConflictPolicy, err)
+	}
+	if got := RequestKeys(); len(got) != 5 || !slices.Contains(got, KeyConflictPolicy) {
+		t.Errorf("RequestKeys() = %v, want the five request keys including %q", got, KeyConflictPolicy)
+	}
+	if !HasRequest(map[string]string{KeyConflictPolicy: "Overwrite"}) {
+		t.Error("conflict-policy must count as a request annotation")
 	}
 }
 
