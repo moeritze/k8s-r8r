@@ -41,6 +41,19 @@ release; they are called out under **Changed** or **Removed**.
 
 ### Added
 
+- **`--discovery-setting key=value`** manager flag (chart value
+  `discoverySettings`, a map) finally reaches
+  `discovery.Options.Settings` ([#37](https://github.com/moeritze/k8s-r8r/issues/37)).
+  The settings map was plumbed through the provider interface and read by the
+  `cluster-api` provider, but nothing in a deployed operator ever populated
+  it, so every provider setting was unreachable outside tests. The flag is
+  comma-separated and repeatable; the chart renders one flag per map entry. A
+  malformed entry (no `=`, or an empty key) fails startup instead of being
+  dropped, because a mistyped setting is indistinguishable from an unset one
+  once a provider reads it. Keys read by the `cluster-api` provider are
+  documented in `docs/quickstart.md`; today that is `namespace` (restrict the
+  ClusterAPI `Cluster` watch to a single namespace).
+
 - **`TargetsResolved` condition on `Replication`** reports whether a request
   resolved to any target: `True` once at least one target survives selector
   matching and policy evaluation, `False`/`PolicyDenied` when policy refused

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -126,6 +127,46 @@ func (s *stringListFlag) Set(v string) error {
 		if part = strings.TrimSpace(part); part != "" {
 			*s = append(*s, part)
 		}
+	}
+	return nil
+}
+
+// stringMapFlag is a flag.Value accumulating key=value pairs: repeatable and
+// comma-separated, so --discovery-setting=a=1,b=2 and --discovery-setting=a=1
+// --discovery-setting=b=2 are equivalent. A later entry wins for a repeated
+// key. Values may contain "=" (only the first one separates) but not ",".
+//
+// Unlike stringListFlag, a malformed entry is an error rather than a dropped
+// one: a mistyped setting is indistinguishable from an unset setting once the
+// provider reads it, so it would silently take the default and produce a
+// misconfigured operator that looks healthy.
+type stringMapFlag map[string]string
+
+// String implements flag.Value. Entries are sorted so the rendering is stable.
+func (m *stringMapFlag) String() string {
+	pairs := make([]string, 0, len(*m))
+	for k, v := range *m {
+		pairs = append(pairs, k+"="+v)
+	}
+	slices.Sort(pairs)
+	return strings.Join(pairs, ",")
+}
+
+// Set implements flag.Value.
+func (m *stringMapFlag) Set(v string) error {
+	for part := range strings.SplitSeq(v, ",") {
+		if part = strings.TrimSpace(part); part == "" {
+			continue
+		}
+		key, val, found := strings.Cut(part, "=")
+		key = strings.TrimSpace(key)
+		if !found || key == "" {
+			return fmt.Errorf("%q is not key=value with a non-empty key", part)
+		}
+		if *m == nil {
+			*m = stringMapFlag{}
+		}
+		(*m)[key] = strings.TrimSpace(val)
 	}
 	return nil
 }
@@ -302,6 +343,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var discoveryProviderName string
+	var discoverySettings stringMapFlag
 	var hubName string
 	var allowedKinds string
 	var stripMetadataKeys stringListFlag
@@ -326,6 +368,11 @@ func main() {
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	flag.StringVar(&discoveryProviderName, "discovery-provider", "cluster-api",
 		"The cluster discovery provider to use (registered providers: cluster-api).")
+	flag.Var(&discoverySettings, "discovery-setting",
+		"Provider-specific setting as key=value, comma-separated and repeatable. "+
+			"Keys are defined by the selected --discovery-provider; unknown keys are ignored. "+
+			"The cluster-api provider reads \"namespace\" (restrict the ClusterAPI Cluster "+
+			"watch to one namespace; empty, the default, watches all).")
 	flag.StringVar(&hubName, "hub-name", "hub",
 		"The source-cluster identity stamped onto replicas.")
 	flag.StringVar(&allowedKinds, "allowed-kinds", "secrets,configmaps",
@@ -460,7 +507,10 @@ func main() {
 
 	// Discovery provider, selected by name from the registry providers
 	// register into (the capi import registers "cluster-api").
-	provider, err := discovery.New(discoveryProviderName, discovery.Options{HubConfig: hubCfg})
+	provider, err := discovery.New(discoveryProviderName, discovery.Options{
+		HubConfig: hubCfg,
+		Settings:  discoverySettings,
+	})
 	if err != nil {
 		setupLog.Error(err, "Failed to construct discovery provider", "provider", discoveryProviderName)
 		os.Exit(1)

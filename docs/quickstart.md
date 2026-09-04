@@ -98,9 +98,34 @@ Useful values (see `charts/k8s-r8r/values.yaml` for all):
 | Value | Flag | Default |
 |---|---|---|
 | `discoveryProvider` | `--discovery-provider` | `cluster-api` |
+| `discoverySettings` | `--discovery-setting` | `{}` |
 | `hubName` | `--hub-name` | `hub` |
 | `allowedKinds` | `--allowed-kinds` | `[secrets, configmaps]` |
 | `spokeResync` | `--spoke-resync` | engine default (10h) |
+
+### Discovery provider settings
+
+`discoverySettings` is a map of provider-specific settings; the chart renders
+one `--discovery-setting key=value` argument per entry (the flag is also
+comma-separated and repeatable when you run the manager directly). Which keys
+mean something is up to the selected `discoveryProvider` — unknown keys are
+ignored, but a malformed entry (no `=`, or an empty key) fails operator
+startup rather than being silently dropped, so a typo is loud.
+
+Keys read by the `cluster-api` provider:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `namespace` | *(empty)* | Restrict the ClusterAPI `Cluster` watch to one namespace. Empty watches all namespaces. |
+
+Discovery keys target clusters by `Cluster` object name, so a fleet that runs
+identically named `Cluster` objects in several namespaces should scope the
+provider to one namespace to keep those names unique:
+
+```sh
+helm upgrade k8s-r8r charts/k8s-r8r --reuse-values \
+  --set discoverySettings.namespace=capi-system
+```
 
 ## 3. Annotate a Secret — and watch default deny
 
