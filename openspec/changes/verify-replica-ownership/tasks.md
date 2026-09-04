@@ -75,8 +75,9 @@
       worktree also analyses sibling worktrees, which produces unrelated
       `SA5011` noise from other agents' in-flight files); `origin/main` and
       this branch both report 0 issues in isolation.
-- [ ] 7.2 `make test-e2e` — not run locally (no docker on this machine); the
-      CI `E2E (kind fleet, hub + 2 spokes)` job covers it. No e2e case was
+- [x] 7.2 `make test-e2e` — not run locally (no docker on this machine), but
+      CI's `E2E (kind fleet, hub + 2 spokes)` job ran it on this branch and
+      passed (10m59s, run 33870175449). No e2e case was
       added for the label-strip path on purpose: e2e runs with the default
       10h `--spoke-resync`, and the eviction is invisible to the watch by
       construction, so the case cannot be exercised there without a
