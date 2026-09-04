@@ -589,6 +589,43 @@ func (r *Reconciler) applyTarget(
 		}
 	case err != nil:
 		return fail(classifyTransportErr(err), err.Error(), true)
+	case ClassifyReplicaOwnership(existing.GetLabels(), src.GetUID()) == OwnershipStripped:
+		// The object still carries this replication's r8r.io/source-uid at
+		// the name our own inventory records, so it is our replica — but
+		// something rewrote or removed app.kubernetes.io/managed-by, which
+		// is the spoke cache's label selector. The replica had therefore
+		// dropped out of the drift watch entirely and no informer event
+		// would ever have surfaced it again (issue #36); this live read is
+		// what found it.
+		//
+		// Without this case it lands in DecideConflict's "unmanaged object"
+		// branch, which under the default Fail policy reports a Conflict
+		// AND removes the inventory entry — the engine forgetting a replica
+		// it created, which is how a copy of a Secret gets stranded on a
+		// spoke with nothing tracking it.
+		//
+		// Re-applying restores the ownership marks, which puts the object
+		// back inside the cache's selector: the repair IS the fix for the
+		// blindness, so the DriftDetector needs no notification.
+		observed := SourceHash(existing)
+		if applyErr := r.applyWithRecreate(ctx, s.cluster, desired); applyErr != nil {
+			return fail(classifyTransportErr(applyErr), applyErr.Error(), true)
+		}
+		telemetry.IncOwnershipLost(s.cluster, telemetry.OwnershipRepaired)
+		r.event(rep, "Warning", ReasonOwnershipRepaired, fmt.Sprintf(
+			"replica %s lost its %s label and had dropped out of the drift watch; ownership marks and content restored",
+			replicaRef(s.cluster, s.namespace, s.name), LabelManagedBy))
+		// A stripped label is metadata, not payload, so it must not move the
+		// drift-correction counter on its own (that counter's contract is
+		// "content was actually wrong"). When the payload diverged too, both
+		// signals fire — the pair is the strongest tampering evidence there
+		// is. Hashes only, never the diverging content.
+		if observed != hash {
+			telemetry.IncDriftCorrection(s.cluster)
+			r.event(rep, "Warning", "DriftCorrected",
+				fmt.Sprintf("restored replica %s: observed content %s, expected %s",
+					replicaRef(s.cluster, s.namespace, s.name), observed, hash))
+		}
 	default:
 		decision := DecideConflict(existing, src, hash, eff.AllowedConflictPolicies)
 		switch decision.Action {
@@ -763,10 +800,33 @@ func (r *Reconciler) collectGarbage(
 			})
 			delays = append(delays, r.backoff.Failure(nn, e.ClusterName))
 			continue
-		case !IsManagedReplica(existing.GetLabels(), rep.Spec.SourceRef.UID):
-			// Not ours — never touch it; just drop the entry.
-			*inv = removeEntry(*inv, KeyForEntry(e))
-			continue
+		default:
+			switch ClassifyReplicaOwnership(existing.GetLabels(), rep.Spec.SourceRef.UID) {
+			case OwnershipForeign:
+				// The object carries none of this replication's marks, so it
+				// is not ours to delete — the gate holds. What used to
+				// follow was a bare `continue`: the entry vanished with no
+				// event and no metric, which is precisely the "no code path
+				// may lose track of a created replica" the spec forbids.
+				// Refuse the delete, but say so.
+				telemetry.IncOwnershipLost(e.ClusterName, telemetry.OwnershipOrphaned)
+				r.event(rep, "Warning", ReasonReplicaOrphaned, fmt.Sprintf(
+					"inventory entry %s no longer carries this replication's ownership labels; releasing it without deleting anything — the object on the spoke may need manual cleanup",
+					replicaRef(e.ClusterName, e.Namespace, e.Name)))
+				*inv = removeEntry(*inv, KeyForEntry(e))
+				continue
+			case OwnershipStripped:
+				// managed-by was rewritten, but r8r.io/source-uid still
+				// names this replication's source: our replica, evicted from
+				// the drift watch. Cleanup is exactly the removal of what
+				// the engine created, so it is deleted below — abandoning it
+				// would strand a copy of the source on the spoke.
+				telemetry.IncOwnershipLost(e.ClusterName, telemetry.OwnershipDeleted)
+				r.event(rep, "Warning", ReasonOwnershipStripped, fmt.Sprintf(
+					"replica %s had lost its %s label; deleting it during cleanup anyway, because its %s label still identifies it",
+					replicaRef(e.ClusterName, e.Namespace, e.Name), LabelManagedBy, LabelSourceUID))
+			case OwnershipManaged:
+			}
 		}
 
 		err := r.Transport.Delete(ctx, e.ClusterName, obj)
