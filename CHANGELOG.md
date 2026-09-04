@@ -77,9 +77,45 @@ release; they are called out under **Changed** or **Removed**.
   `k8s_r8r_drift_events_total`, which counts spoke informer traffic (the
   operator's own apply echoes included) and therefore rises on ordinary
   source updates.
+- **`k8s_r8r_replica_ownership_lost_total{cluster,action}`** counts
+  inventoried replicas found without the `app.kubernetes.io/managed-by:
+  k8s-r8r` label — the spoke cache's own selector, so such a replica had
+  dropped out of the drift watch. `action` is `repaired`, `deleted` or
+  `orphaned`; alert on `orphaned`, which is the only one implying manual
+  cleanup. Paired with the `OwnershipRepaired`, `OwnershipStripped` and
+  `ReplicaOrphaned` warning events.
 
 ### Fixed
 
+- **A replica whose `app.kubernetes.io/managed-by` label is rewritten is no
+  longer lost** ([#36](https://github.com/moeritze/k8s-r8r/issues/36)).
+  That label is the server-side selector the spoke caches are built with, so
+  anything rewriting it on a spoke — another controller claiming the object, a
+  GitOps tool stamping its own ownership labels — evicted the replica from
+  drift detection entirely while it stayed in the `Replication`'s inventory.
+
+  Two consequences were worse than the lost watch coverage. The periodic
+  reconcile's live read misfiled the engine's own replica as a foreign object,
+  reported a `Conflict`, and **removed its inventory entry** — so a
+  `Replication` deleted afterwards could leave a copy of the replicated Secret
+  stranded on the spoke. Garbage collection's safety gate dropped such an
+  entry with no event and no metric at all.
+
+  The engine now classifies both ownership marks. An object still carrying
+  this replication's `r8r.io/source-uid` is recognised as its replica whatever
+  happened to `managed-by`: it is repaired (which restores the label and
+  returns the object to the watch), it keeps its inventory entry, and the
+  repair is reported. Objects carrying neither mark are still never touched,
+  but releasing their inventory entry is now reported instead of silent.
+  Verification uses the live reads the reconcile already performs, so there is
+  no additional API traffic on the healthy path.
+
+  **Behaviour change worth noting:** a replica whose ownership label was
+  rewritten is now **deleted** during cleanup, where it used to be abandoned.
+  This only ever applies to an object carrying this replication's own source
+  UID at the name its own inventory records. Detection is bounded by
+  `--spoke-resync` (10h by default), since the watch cannot see an object
+  outside its selector; see `docs/security.md`.
 - **Policy-denied and revoked `Replication` objects no longer report
   `Ready: True`** ([#27](https://github.com/moeritze/k8s-r8r/issues/27)).
   A `Replication` with zero resolved targets reported
