@@ -39,8 +39,23 @@ const (
 // Condition types recorded on a Replication.
 const (
 	// ReplicationConditionReady is the aggregate readiness condition: True when
-	// every desired target holds an up-to-date replica, False otherwise.
+	// every desired target holds an up-to-date replica, False otherwise. It is
+	// written exclusively by the replication engine, which derives it from the
+	// per-target outcomes of the reconcile that produced the status.
 	ReplicationConditionReady = "Ready"
+
+	// ReplicationConditionTargetsResolved reports whether the request behind a
+	// Replication resolved to at least one target: True once the cluster
+	// selector matched a ready cluster and policy permitted at least one
+	// (cluster, namespace) pair, False with reason PolicyDenied or NoTargets
+	// otherwise. It is written exclusively by the request controller, which
+	// owns target resolution; the engine never touches it.
+	//
+	// Splitting this out of Ready is what keeps the two controllers from
+	// clobbering each other's verdict: "nothing was asked of the engine" and
+	// "everything the engine was asked to do succeeded" are different facts,
+	// and a request that resolves to nothing must never read as healthy.
+	ReplicationConditionTargetsResolved = "TargetsResolved"
 )
 
 // Well-known reasons used on Replication conditions. They form the reason
@@ -63,6 +78,16 @@ const (
 	// target and is not managed by k8s-r8r, and the effective conflict policy
 	// did not permit taking it over.
 	ReasonConflict = "Conflict"
+
+	// ReasonNoTargets indicates replication was requested but resolved to zero
+	// targets — no ready cluster matched the target-clusters selector, or every
+	// candidate target was withdrawn. Nothing is being replicated, so Ready is
+	// False: "asked to do something, did nothing" is a failure, not success.
+	ReasonNoTargets = "NoTargets"
+
+	// ReasonTargetsResolved is the TargetsResolved=True reason: at least one
+	// target survived selector matching and policy evaluation.
+	ReasonTargetsResolved = "TargetsResolved"
 )
 
 // SourceReference identifies the source object a Replication fans out. The UID
@@ -218,8 +243,9 @@ type ReplicationStatus struct {
 	SourceHash string `json:"sourceHash,omitempty"`
 
 	// Conditions holds the aggregate conditions. "Ready" summarizes the whole
-	// fanout; reasons include PolicyDenied, PolicyRevoked, NotAuthoritative,
-	// and Conflict.
+	// fanout; reasons include NoTargets, PolicyRevoked, NotAuthoritative, and
+	// Conflict. "TargetsResolved" reports whether the request resolved to any
+	// target at all; reasons include PolicyDenied and NoTargets.
 	// +optional
 	// +listType=map
 	// +listMapKey=type

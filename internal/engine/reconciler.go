@@ -590,7 +590,7 @@ func (r *Reconciler) applyTarget(
 	case err != nil:
 		return fail(classifyTransportErr(err), err.Error(), true)
 	default:
-		decision := DecideConflict(existing, src.GetUID(), hash, eff.AllowedConflictPolicies)
+		decision := DecideConflict(existing, src, hash, eff.AllowedConflictPolicies)
 		switch decision.Action {
 		case ActionFail:
 			telemetry.IncConflict("fail")
@@ -616,9 +616,40 @@ func (r *Reconciler) applyTarget(
 			// Our own replica. Skip the write when both the hash
 			// annotation and the actual content already match — the
 			// common healthy path stays write-free.
-			if existing.GetAnnotations()[AnnotationSourceHash] != hash || SourceHash(existing) != hash {
+			//
+			// Two sub-cases need the write, and they are not the same
+			// event (observability-operations: drift correction is
+			// observable):
+			//
+			//   - observed != hash: the replica's *content* diverged
+			//     from the source. Someone (or something) rewrote the
+			//     replica on the spoke, so the write is a corrective
+			//     restore worth an event and a counter.
+			//   - observed == hash but the stored annotation differs:
+			//     the content is already right and only the engine's
+			//     own bookkeeping annotation is stale. That is a
+			//     metadata repair, not drift — deliberately silent, see
+			//     the comment below.
+			observed := SourceHash(existing)
+			corrected := observed != hash
+			if existing.GetAnnotations()[AnnotationSourceHash] != hash || corrected {
 				if applyErr := r.applyWithRecreate(ctx, s.cluster, desired); applyErr != nil {
 					return fail(classifyTransportErr(applyErr), applyErr.Error(), true)
+				}
+				// A stale annotation over unchanged content is what a
+				// change to the hashing rules produces fleet-wide on
+				// upgrade; counting it would turn an operator rollout
+				// into a fleet-wide tamper alarm. Only real content
+				// divergence is reported, so a non-zero
+				// k8s_r8r_drift_corrections_total always means a
+				// replica's payload was actually wrong.
+				if corrected {
+					telemetry.IncDriftCorrection(s.cluster)
+					// Hashes only — never the diverging content
+					// itself (secret-safe telemetry).
+					r.event(rep, "Warning", "DriftCorrected",
+						fmt.Sprintf("restored replica %s: observed content %s, expected %s",
+							replicaRef(s.cluster, s.namespace, s.name), observed, hash))
 				}
 			}
 		}
@@ -859,8 +890,13 @@ func (r *Reconciler) event(rep *r8rv1alpha1.Replication, eventType, reason, mess
 }
 
 // emitTransitionEvents turns Ready-condition transitions into lifecycle
-// events (observability spec: replicated / denied), so events fire on
-// state changes rather than on every reconcile.
+// events (observability spec: replicated / denied / no targets), so events
+// fire on state changes rather than on every reconcile.
+//
+// Because Ready is False for a Replication with no desired targets, the
+// Replicated event now only fires when something was actually replicated: a
+// denied request no longer manufactures a "0/0 targets ready" success event
+// on every reconcile.
 func (r *Reconciler) emitTransitionEvents(rep *r8rv1alpha1.Replication, prev, next *metav1.Condition) {
 	if next == nil {
 		return
@@ -870,9 +906,10 @@ func (r *Reconciler) emitTransitionEvents(rep *r8rv1alpha1.Replication, prev, ne
 		(prev == nil || prev.Status != metav1.ConditionTrue):
 		r.event(rep, "Normal", "Replicated", next.Message)
 	case next.Status == metav1.ConditionFalse &&
-		next.Reason == r8rv1alpha1.ReasonPolicyDenied &&
+		(next.Reason == r8rv1alpha1.ReasonPolicyDenied ||
+			next.Reason == r8rv1alpha1.ReasonNoTargets) &&
 		(prev == nil || prev.Reason != next.Reason):
-		r.event(rep, "Warning", r8rv1alpha1.ReasonPolicyDenied, next.Message)
+		r.event(rep, "Warning", next.Reason, next.Message)
 	}
 }
 

@@ -36,6 +36,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/labels"
 
+	r8rv1alpha1 "github.com/moeritze/k8s-r8r/api/v1alpha1"
 	"github.com/moeritze/k8s-r8r/internal/annotations"
 )
 
@@ -47,20 +48,23 @@ const (
 	annTargetClusters   = annotations.KeyTargetClusters
 	annTargetNamespaces = annotations.KeyTargetNamespaces
 	annTargetName       = annotations.KeyTargetName
+	annConflictPolicy   = annotations.KeyConflictPolicy
 
 	// annSourceHash is written by the operator onto replicas; it is not a
 	// request key but must not trigger an unknown-key warning.
 	annSourceHash = annotations.KeySourceHash
 )
 
-// knownKeys is the closed set of r8r.io/* keys the shared parser accepts.
-var knownKeys = map[string]bool{
-	annReplicate:        true,
-	annTargetClusters:   true,
-	annTargetNamespaces: true,
-	annTargetName:       true,
-	annSourceHash:       true,
-}
+// knownKeys is the closed set of r8r.io/* keys the shared parser accepts. It
+// is derived from the parser's own request-key set so the two cannot drift:
+// a key the parser accepts must never be filtered out here as "unknown".
+var knownKeys = func() map[string]bool {
+	m := map[string]bool{annSourceHash: true}
+	for _, k := range annotations.RequestKeys() {
+		m[k] = true
+	}
+	return m
+}()
 
 // parsedRequest is the validated form of the r8r.io/* annotations on one
 // object, shaped for the admission-time policy pre-check.
@@ -80,6 +84,9 @@ type parsedRequest struct {
 	targetNamespaces []string
 	// targetName is the optional explicit replica name override.
 	targetName string
+	// conflictPolicy is the request-side conflict consent, defaulted by the
+	// shared parser when the annotation is absent.
+	conflictPolicy r8rv1alpha1.ConflictPolicy
 	// unknownKeys lists r8r.io/* keys outside the known contract (warning,
 	// not rejection).
 	unknownKeys []string
@@ -103,7 +110,7 @@ func hasR8RAnnotations(ann map[string]string) bool {
 // sourceNamespace is used as the target-namespace default. On error the
 // partially parsed result is still returned (for warning rendering).
 func parseRequest(ann map[string]string, sourceNamespace string) (*parsedRequest, error) {
-	p := &parsedRequest{}
+	p := &parsedRequest{conflictPolicy: annotations.DefaultConflictPolicy}
 
 	// Filter unknown r8r.io/* keys: the shared parser rejects them (the
 	// controller fails loudly on typos), but at admission time they only
@@ -139,5 +146,6 @@ func parseRequest(ann map[string]string, sourceNamespace string) (*parsedRequest
 	}
 	p.targetNamespaces = req.EffectiveNamespaces(sourceNamespace)
 	p.targetName = req.TargetName
+	p.conflictPolicy = req.ConflictPolicy
 	return p, nil
 }

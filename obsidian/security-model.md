@@ -17,7 +17,7 @@ Full write-up: `../docs/security.md`. Core stances:
 
 ## Push architecture + blast radius (D2/D5)
 
-Hub holds fleet write access → mitigated by [[cluster-discovery#credential-bootstrap-d5|one-shot narrow SA bootstrap]]: admin kubeconfig used once, steady state runs on short-lived rotated SA tokens scoped to allowlisted kinds. Pull-agent transport is a future `Transport` implementation.
+Hub holds fleet write access → mitigated by [[cluster-discovery#Credential bootstrap (D5)|one-shot narrow SA bootstrap]]: admin kubeconfig used once, steady state runs on short-lived rotated SA tokens scoped to allowlisted kinds. Pull-agent transport is a future `Transport` implementation.
 
 **How narrow the SA actually is (be precise, the docs used to overstate this).** The spoke `k8s-r8r-replicator` ClusterRole grants `get,list,watch,create,update,patch,delete` on each kind in `--allowed-kinds` (default `secrets,configmaps`) plus `get,create,patch` on namespaces — no `resourceNames`, and bound via ClusterRoleBinding, so **every namespace** of the spoke. The `managed-by` selector on spoke caches filters what the operator *watches*; it is not an authz boundary.
 
@@ -39,10 +39,22 @@ No log, event, condition, or metric ever contains payload data — hashes only. 
 ## Weaponization guards
 
 - `Overwrite` conflict mode could replace a victim cluster's secret → policy-gated, `Fail` default; replicas of a *different* source are never taken over ([[replication-flow]]).
-- Exfiltration via annotation → blocked by default-deny [[policy-model]]; no request-side override exists. ⚠️ This claim is disputed — see [#26](https://github.com/moeritze/k8s-r8r/issues/26) / [#34](https://github.com/moeritze/k8s-r8r/issues/34); corrected wording lands with that fix, not here.
+- Exfiltration via annotation → blocked by default-deny [[policy-model]]. Every destination a request names is re-evaluated against policy on every reconcile; an annotation can only narrow what a policy already permits, never widen it.
+- **Laundering a fanout through a second replicator** → blocked by [[replication-flow|metadata hygiene]]. A replica that inherited `replicator.v1.mittwald.de/replicate-to-clusters` (or the emberstack, Argo CD, Helm or Flux ownership keys) would be a valid *source* for that other controller — a second fanout no `ReplicationPolicy` ever saw. The engine strips those prefixes from the replica **and** from the canonical hash (`isStrippedKey`, `internal/engine/render.go`), operators can extend the denylist with `--strip-metadata-keys` / chart `stripMetadataKeys`. Fixed in [#26](https://github.com/moeritze/k8s-r8r/issues/26); the default-deny claim above depends on it.
+
+## Known gaps (open issues)
+
+Honest inventory of controls that are weaker than they read. None is an escalation; each is a promise the code does not yet keep.
+
+| # | Gap | Where it bites |
+|---|---|---|
+| [#34](https://github.com/moeritze/k8s-r8r/issues/34) | `Overwrite` has **no request-side consent**. `EffectiveConflictPolicy` (`internal/engine/conflict.go`) takes only the policy grant, so the "two-key turn" `docs/security.md` describes does not exist — anyone who may annotate a source in an allowed namespace gets the strongest conflict behaviour the policy permits | [[replication-flow]], [[policy-model]] |
+| [#35](https://github.com/moeritze/k8s-r8r/issues/35) | `Adopt` rewrites `app.kubernetes.io/managed-by` on a **pre-existing** object (`Renderer.AdoptPatch`), permanently breaking Helm's ownership check, and files it in inventory — so a later revocation with `revocationPolicy: Delete` deletes an object k8s-r8r never created | [[replication-flow]], [[policy-model]] |
+| [#36](https://github.com/moeritze/k8s-r8r/issues/36) | Rewriting `managed-by` on a replica drops it out of the label-filtered spoke cache; drift detection then never sees it again while status still reports the target ready | [[drift-detection]] |
+| [#29](https://github.com/moeritze/k8s-r8r/issues/29) | Spoke RBAC scoped to `--allowed-kinds`, not to the policy universe (above) | [[cluster-discovery]] |
 
 ## Supply chain
 
-Released images/charts are cosign-signed (keyless, GitHub OIDC — no long-lived key), carry SPDX SBOMs and SLSA provenance attestations, and are OCI-labelled back to the repo. Verify before running a fleet-wide Secret reader: `../docs/releasing.md#verifying-a-release`. Build-side details and rationale: [[development#supply-chain-what-a-release-proves]].
+Released images/charts are cosign-signed (keyless, GitHub OIDC — no long-lived key), carry SPDX SBOMs and SLSA provenance attestations, and are OCI-labelled back to the repo. Verify before running a fleet-wide Secret reader: `../docs/releasing.md#verifying-a-release`. Build-side details and rationale: [[development#Supply chain (what a release proves)|what a release proves]].
 
 Repo hygiene: public repo — gitleaks pre-push hook + CI job gate every push; govulncheck on every PR and weekly on cron; actions SHA-pinned with Dependabot refresh (see [[development]]).
