@@ -10,7 +10,7 @@ kubebuilder project, module `github.com/moeritze/k8s-r8r`, API group `r8r.io/v1a
 
 ## Testing ladder
 
-1. **Unit + envtest** — `make test` (121 test functions, 237 cases with subtests; engine/request suites run against an envtest API server, spokes faked via recording Transport)
+1. **Unit + envtest** — `make test` (133 test functions, 275 cases with subtests; engine/request suites run against an envtest API server, spokes faked via recording Transport)
 2. **e2e** — `make test-e2e`: provisions a real kind fleet (`hack/kind-fleet.sh`, hub + 2 spokes), simulates ClusterAPI with a minimal CRD + status-patched `Cluster` objects + `--internal` kubeconfig Secrets, exercises full [[replication-flow]], [[cluster-discovery|cluster lifecycle]], and scale. `K8S_R8R_E2E_KEEP=1` keeps the fleet for debugging.
 3. **CI** (`.github/workflows/ci.yml`) — DCO, gitleaks, lint (custom golangci-lint w/ logcheck), test, build, e2e. Lint runs the same binary locally via `make lint`. Separately, `.github/workflows/govulncheck.yml` runs [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) on every PR **and** weekly on cron — the vuln DB moves even when the code doesn't, so a scheduled run is the point; it lives outside `ci.yml` so the schedule doesn't drag every CI job with it.
 

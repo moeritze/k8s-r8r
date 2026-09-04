@@ -32,13 +32,17 @@ So: reduction from fleet admin is real (no node/workload/RBAC control) but **nar
 
 Validating webhook (CEL matchConditions: fires only on objects carrying `r8r.io/` annotations; K8s ≥ 1.30) gives apply-time errors naming the failing policy dimension. `failurePolicy: Ignore` is **mandatory** — `Fail` would let operator downtime block all annotated secret writes. Security never depends on it: reconcile-time policy evaluation is authoritative; a bypassed webhook means worse error messages, never unauthorized replication.
 
+The deny/warn split follows from that doctrine: **deny** only what no policy could ever allow or what the shared parser cannot read (a malformed `r8r.io/conflict-policy`, say — the key is part of the closed request contract, so its value set is validated at admission); **warn** for everything advisory, including a `conflict-policy` no candidate policy permits. That request replicates normally and only its conflict handling falls back to the weaker key, so denying it would block a legitimate write over a hypothetical conflict.
+
 ## Secret-safe telemetry
 
 No log, event, condition, or metric ever contains payload data — hashes only. Enforced twice: runtime canary test + AST-walking static ratchet (`internal/telemetry/secretsafety_audit_test.go`) that fails on any `Data`/`StringData` reaching a formatting/event call. Checklist: `internal/telemetry/REVIEW_CHECKLIST.md`.
 
+The `DriftCorrected` event is the design under load: it must say *that* a replicated Secret was rewritten without saying *what* changed, so it carries the replica ref and the two full `sha256:` hashes and nothing else. Full hashes rather than prefixes — they are not secrets, they compare directly against `status.sourceHash` and the replica's annotation, and truncation would make distinct drifts collide into one rate-limiter key. Reaching for the object's `data` to describe the diff would trip the ratchet, correctly. See [[drift-detection]].
+
 ## Weaponization guards
 
-- `Overwrite` conflict mode could replace a victim cluster's secret → policy-gated, `Fail` default; replicas of a *different* source are never taken over ([[replication-flow]]).
+- `Overwrite` conflict mode could replace a victim cluster's secret → a genuine **two-key turn** since [#34](https://github.com/moeritze/k8s-r8r/issues/34): the engine acts on the *weaker* of the source's `r8r.io/conflict-policy` annotation and the policy grant, and an absent annotation means `Fail`. An admin grant alone no longer overwrites anything, and a request asking for `Overwrite` gets no more than its policies permit. Replicas of a *different* source are never taken over whatever either key says ([[replication-flow#Conflict handling is a two-key turn|mechanism]]). Note this cuts both ways for upgrades: fleets that relied on a grant-only `Overwrite` or `Adopt` now report `Conflict` until each source opts in.
 - Exfiltration via annotation → blocked by default-deny [[policy-model]]. Every destination a request names is re-evaluated against policy on every reconcile; an annotation can only narrow what a policy already permits, never widen it.
 - **Laundering a fanout through a second replicator** → blocked by [[replication-flow|metadata hygiene]]. A replica that inherited `replicator.v1.mittwald.de/replicate-to-clusters` (or the emberstack, Argo CD, Helm or Flux ownership keys) would be a valid *source* for that other controller — a second fanout no `ReplicationPolicy` ever saw. The engine strips those prefixes from the replica **and** from the canonical hash (`isStrippedKey`, `internal/engine/render.go`), operators can extend the denylist with `--strip-metadata-keys` / chart `stripMetadataKeys`. Fixed in [#26](https://github.com/moeritze/k8s-r8r/issues/26); the default-deny claim above depends on it.
 
@@ -48,8 +52,7 @@ Honest inventory of controls that are weaker than they read. None is an escalati
 
 | # | Gap | Where it bites |
 |---|---|---|
-| [#34](https://github.com/moeritze/k8s-r8r/issues/34) | `Overwrite` has **no request-side consent**. `EffectiveConflictPolicy` (`internal/engine/conflict.go`) takes only the policy grant, so the "two-key turn" `docs/security.md` describes does not exist — anyone who may annotate a source in an allowed namespace gets the strongest conflict behaviour the policy permits | [[replication-flow]], [[policy-model]] |
-| [#35](https://github.com/moeritze/k8s-r8r/issues/35) | `Adopt` rewrites `app.kubernetes.io/managed-by` on a **pre-existing** object (`Renderer.AdoptPatch`), permanently breaking Helm's ownership check, and files it in inventory — so a later revocation with `revocationPolicy: Delete` deletes an object k8s-r8r never created | [[replication-flow]], [[policy-model]] |
+| [#35](https://github.com/moeritze/k8s-r8r/issues/35) | `Adopt` rewrites `app.kubernetes.io/managed-by` on a **pre-existing** object (`Renderer.AdoptPatch`), permanently breaking Helm's ownership check, and files it in inventory — so a later revocation with `revocationPolicy: Delete` deletes an object k8s-r8r never created. The two-key turn now requires a per-source opt-in before this can happen, which narrows the blast radius but does not close the issue | [[replication-flow]], [[policy-model]] |
 | [#36](https://github.com/moeritze/k8s-r8r/issues/36) | Rewriting `managed-by` on a replica drops it out of the label-filtered spoke cache; drift detection then never sees it again while status still reports the target ready | [[drift-detection]] |
 | [#29](https://github.com/moeritze/k8s-r8r/issues/29) | Spoke RBAC scoped to `--allowed-kinds`, not to the policy universe (above) | [[cluster-discovery]] |
 

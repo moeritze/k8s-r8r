@@ -21,13 +21,29 @@ watch event ──▶ compare r8r.io/source-hash annotation vs desired
 - Fallback resync (default 10h, `--spoke-resync`) catches missed events and dropped watches.
 - Informer lifecycle bound to cluster register/deregister.
 
-## Known gaps (open issues)
+## A correction is observable
 
-- **A correction leaves no trace** ([#30](https://github.com/moeritze/k8s-r8r/issues/30)). Drift is repaired promptly and then looks exactly like a routine reconcile: no event, no condition, no log line that distinguishes "found tampering and overwrote it" from "nothing to do". The one counter that exists, `k8s_r8r_drift_events_total`, counts *informer events on managed replicas* — including the engine's own apply echoes — so it cannot answer "has anything been tampering with my replicated secrets?". A fix is in flight; any signal must stay hash-only per [[security-model|secret-safe telemetry]].
-- **Blind if `managed-by` is rewritten** ([#36](https://github.com/moeritze/k8s-r8r/issues/36)). The spoke cache is label-filtered server-side, and `driftHandler.observe` returns early for anything without `app.kubernetes.io/managed-by: k8s-r8r`. If another controller, a GitOps tool, or an operator rewrites or removes that label on a replica, the object leaves the watch entirely while staying in `Replication.status.inventory` — edits and deletions then go unnoticed forever, and status keeps reporting the target ready. This is the metadata-only design working as specified, so the fix is not "watch more": candidates are resync-time `Transport.Get` verification of inventory members, or a signal when an inventory member is absent from the filtered cache.
+The corrective write is not silent any more ([#30](https://github.com/moeritze/k8s-r8r/issues/30)). `applyTarget` splits the write into its two sub-cases and only one of them is reported:
+
+| stored `source-hash` annotation | content hash | treated as |
+|---|---|---|
+| stale | differs | **drift** — counted + evented |
+| current | differs | **drift** — counted + evented |
+| stale | equal | **metadata repair** — written, silent |
+
+- `k8s_r8r_drift_corrections_total{cluster}` — replicas whose **content** the engine rewrote. This is the tamper signal.
+- `DriftCorrected` — a Warning event on the `Replication`, naming the replica ref and both hashes: `restored replica <cluster>/<ns>/<name>: observed content sha256:…, expected sha256:…`. Hashes only, never the diverging payload ([[security-model|secret-safe telemetry]]).
+
+**Why the annotation-only repair stays silent, deliberately.** A change to the *hashing rules* produces exactly that state fleet-wide on upgrade — the metadata-hygiene change ([#26](https://github.com/moeritze/k8s-r8r/issues/26)) did it, extending `cleanRawKeys` so every affected replica held a stale annotation over content that recomputed as equal. Counting those would turn an operator rollout into a fleet-wide tamper alarm, and one false spike is enough to teach an operator to ignore the metric permanently. Keeping it out buys the invariant worth alerting on: **a non-zero `k8s_r8r_drift_corrections_total` always means a replica's payload was actually wrong.** The cost is that hand-editing only the `r8r.io/source-hash` annotation is repaired without a signal — acceptable, because no payload was altered and the annotation is the engine's own cache, never trusted alone.
+
+**Read the rate off the metric, not the event stream.** `EventLimiter` suppresses an identical (object, reason, message) for five minutes, so drift recurring with the same hashes collapses into one event. That is the intended flood control ([[operations|rate-limited events]]), and it means the event stream understates recurrence by design. The counter is deliberately not rate-limited: event = "this happened, here is which object", metric = "and it is happening N times a minute".
+
+## Known gap (open issue)
+
+- **Blind if `managed-by` is rewritten** ([#36](https://github.com/moeritze/k8s-r8r/issues/36)). The spoke cache is label-filtered server-side, and `driftHandler.observe` returns early for anything without `app.kubernetes.io/managed-by: k8s-r8r`. If another controller, a GitOps tool, or an operator rewrites or removes that label on a replica, the object leaves the watch entirely while staying in `Replication.status.inventory` — edits and deletions then go unnoticed forever, and status keeps reporting the target ready. Note the correction signal above does not help here: an object that never reaches the reconcile never gets counted. This is the metadata-only design working as specified, so the fix is not "watch more": candidates are resync-time `Transport.Get` verification of inventory members, or a signal when an inventory member is absent from the filtered cache.
 
 ## Why metadata-only
 
 Memory stays bounded at fleet scale AND no fleet-wide secret data accumulates in hub caches — scale and [[security-model|security]] in one move. Cost: one watch connection per cluster per GVK (ArgoCD-proven pattern).
 
-Implementation: `internal/engine/drift.go` · spec: `openspec/specs/replication-engine` (drift requirement) · flow context: [[replication-flow]]
+Implementation: `internal/engine/drift.go` (watch + enqueue), `internal/engine/reconciler.go` (`applyTarget`: the corrective write, the counter and the event) · spec: `openspec/specs/replication-engine` (drift requirement) + `observability-operations` (metrics, rate-limited events) · flow context: [[replication-flow]]
