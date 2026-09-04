@@ -45,12 +45,15 @@ Note the pod stays **Ready** through all of these: readiness reflects hub inform
 
 ## Events
 
-Lifecycle transitions on sources and Replications (Replicated, NoTargets, PolicyDenied, Conflict, DriftCorrected, PolicyRevoked, ClusterGone, CleanedUp), rate-limited per object+reason (5m cooldown, changed messages pass) so flapping targets can't flood. [[security-model|Never any payload data]].
+Lifecycle transitions, rate-limited per object+reason (5m cooldown, changed messages pass) so flapping targets can't flood. [[security-model|Never any payload data]]. They land on two different objects, which matters when you go looking for them:
 
-Two of these are newer than the rest:
+- **On the `Replication`** (engine): `Replicated`, `Adopted`, `CleanedUp` (Normal); `NoTargets`, `PolicyDenied`, `Conflict`, `ConflictOverwritten`, `DriftCorrected`, `PolicyRevoked`, `ClusterGone` (Warning).
+- **On the annotated source object** (request controller): `KindNotEnabled`, `InvalidAnnotations`, `PolicyDenied`, `NameConflict` (Warning) — these fire before a `Replication` exists, or explain why one has fewer targets than asked.
 
-- **`NoTargets`** (Warning, on the `Replication`) — the `Ready` transition for a request that resolved to nothing. It replaced the spurious "Replicated 0/0 targets ready" success event a denied request used to emit on every reconcile ([[replication-flow#5. Status: one writer per condition|condition ownership]]).
-- **`DriftCorrected`** (Warning, on the `Replication`) — `restored replica <cluster>/<ns>/<name>: observed content sha256:…, expected sha256:…`. Only real content divergence; an annotation-only repair is silent by design.
+Two are newer than the rest:
+
+- **`NoTargets`** — the `Ready` transition for a request that resolved to nothing. It replaced the spurious "Replicated 0/0 targets ready" success event a denied request used to emit on every reconcile ([[replication-flow#5. Status: one writer per condition|condition ownership]]).
+- **`DriftCorrected`** — `restored replica <cluster>/<ns>/<name>: observed content sha256:…, expected sha256:…`. Only real content divergence; an annotation-only repair is silent by design.
 
 The 5m cooldown is the contract, not a bug — but it means the event stream **understates the rate** of recurring drift, because identical repeats coalesce. Read the rate off `k8s_r8r_drift_corrections_total`, which is deliberately not rate-limited. Event = "this happened, here is which object"; metric = "and it is happening N times a minute".
 
