@@ -33,14 +33,16 @@ Open issues where behaviour is thinner than a reader would expect. Each is descr
 
 | # | Gap | Note |
 |---|---|---|
-| [#27](https://github.com/moeritze/k8s-r8r/issues/27) | Policy-denied and revoked `Replication`s report `Ready=True` — nothing to alert on *(fix in flight)* | [[replication-flow]], [[operations]] |
-| [#30](https://github.com/moeritze/k8s-r8r/issues/30) | Drift correction emits no event, condition, or usable metric *(fix in flight)* | [[drift-detection]], [[operations]] |
-| [#29](https://github.com/moeritze/k8s-r8r/issues/29) | Spoke RBAC scoped to `--allowed-kinds`, not to the policy universe | [[security-model]], [[cluster-discovery]] |
-| [#34](https://github.com/moeritze/k8s-r8r/issues/34) | `Overwrite` has no request-side consent — the documented two-key turn is one key | [[replication-flow]], [[policy-model]] |
+| [#29](https://github.com/moeritze/k8s-r8r/issues/29) | Spoke RBAC scoped to `--allowed-kinds`, not to the policy universe — full replica verbs in every spoke namespace, no `resourceNames` | [[security-model]], [[cluster-discovery]] |
+| [#31](https://github.com/moeritze/k8s-r8r/issues/31) | No `targets.namespaceSelector`: policy target namespaces are exact names only, while sources may use a selector | [[policy-model]] |
 | [#35](https://github.com/moeritze/k8s-r8r/issues/35) | `Adopt` rewrites `managed-by` (breaks Helm ownership) and revocation deletes the adopted object | [[replication-flow]], [[policy-model]] |
 | [#36](https://github.com/moeritze/k8s-r8r/issues/36) | Drift goes permanently blind if `managed-by` is rewritten on a replica | [[drift-detection]] |
 | [#37](https://github.com/moeritze/k8s-r8r/issues/37) | `discovery.Options.Settings` is never populated, so provider settings are unreachable | [[cluster-discovery]] |
 
+Closed since the last vault pass, now described as behaviour rather than listed here: [#27](https://github.com/moeritze/k8s-r8r/issues/27) (status truthfulness → [[replication-flow#5. Status: one writer per condition|condition ownership]]), [#30](https://github.com/moeritze/k8s-r8r/issues/30) (drift corrections are observable → [[drift-detection]]), [#34](https://github.com/moeritze/k8s-r8r/issues/34) (conflict two-key turn → [[replication-flow#Conflict handling is a two-key turn|conflict handling]]). #34 and #27 both change observable behaviour on upgrade — see [[operations#What to alert on|alerting]] and the breaking-change note in [[replication-flow]].
+
 ## Status
 
-v0 alpha, `v0.1.0-alpha.1` published (2026-09). Bootstrap change `bootstrap-k8s-r8r-operator` complete (36/36 tasks); `make test` green at 121 test functions / 237 cases, e2e green on the kind fleet. Five OpenSpec changes archived, their deltas promoted into `openspec/specs`. Since the release: foreign-ownership metadata stripping, CAPI API-version negotiation, core-v1 event recording, spoke-RBAC doc correction. Post-v1 topics: licensing model, contribution setup, distribution.
+v0 alpha, `v0.1.0-alpha.1` published (2026-09). Bootstrap change `bootstrap-k8s-r8r-operator` complete (36/36 tasks); `make test` green at 133 test functions / 275 cases, e2e green on the kind fleet. Five OpenSpec changes archived, their deltas promoted into `openspec/specs`. Since the release: foreign-ownership metadata stripping, CAPI API-version negotiation, core-v1 event recording, spoke-RBAC doc correction, truthful `Replication` status, observable drift corrections, request-side conflict consent. Post-v1 topics: licensing model, contribution setup, distribution.
+
+Two of those are **breaking on upgrade** and worth reading before rolling forward: `Replication`s that reported `Ready=True, 0/0 targets ready` now report `Ready=False`/`NoTargets`, and conflict handling now requires the `r8r.io/conflict-policy` annotation in addition to the policy grant.
