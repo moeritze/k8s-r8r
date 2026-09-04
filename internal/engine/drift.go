@@ -251,9 +251,9 @@ const (
 )
 
 // Event reasons for the ownership-verification outcomes. These are event
-// reasons, not per-target status reasons: neither outcome invents a slot in
-// status.targets (an orphaned entry is not a desired target, and a repaired
-// one is simply Ready again).
+// reasons, not per-target status reasons: neither outcome adds an entry to
+// status.nonReadyTargets. An orphaned entry is not a desired target at all,
+// and a repaired replica is legitimately Ready again.
 const (
 	// ReasonOwnershipRepaired: an inventoried replica had lost its
 	// managed-by label and the engine restored its marks and content.
@@ -276,7 +276,9 @@ const (
 // exists precisely to name the case IsManagedReplica cannot express, "our
 // replica, relabelled".
 func ClassifyReplicaOwnership(labels map[string]string, sourceUID types.UID) ReplicaOwnership {
-	if labels[LabelSourceUID] != string(sourceUID) || sourceUID == "" {
+	// An empty source UID must never match an object that simply has no
+	// source-uid label — both read as "" through the map.
+	if sourceUID == "" || labels[LabelSourceUID] != string(sourceUID) {
 		return OwnershipForeign
 	}
 	if labels[LabelManagedBy] == ManagedByValue {
