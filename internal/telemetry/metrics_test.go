@@ -35,6 +35,9 @@ func exerciseAll() {
 	IncRevocation("delete")
 	IncDriftEvent("spoke-a")
 	IncDriftCorrection("spoke-a")
+	IncOwnershipLost("spoke-a", OwnershipRepaired)
+	IncOwnershipLost("spoke-a", OwnershipDeleted)
+	IncOwnershipLost("spoke-a", OwnershipOrphaned)
 	IncSpokeBootstrap(true)
 	IncSpokeBootstrap(false)
 	IncTokenRotation(true)
@@ -114,6 +117,7 @@ func TestMetricInventoryComplete(t *testing.T) {
 		"k8s_r8r_revocations_total",
 		"k8s_r8r_drift_events_total",
 		"k8s_r8r_drift_corrections_total",
+		"k8s_r8r_replica_ownership_lost_total",
 		"k8s_r8r_cluster_connectivity",
 		"k8s_r8r_clusters",
 		"k8s_r8r_discovery_up",
