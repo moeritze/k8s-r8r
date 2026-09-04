@@ -33,6 +33,21 @@ replicaCount: 1
 # cluster-api.
 discoveryProvider: cluster-api
 
+# Provider-specific discovery settings (--discovery-setting key=value), as a
+# map. Keys are defined by the selected discoveryProvider; unknown keys are
+# ignored, and a malformed entry fails operator startup rather than being
+# silently dropped. Keys and values must not contain commas.
+#
+# cluster-api:
+#   namespace  Restrict the ClusterAPI Cluster watch to one namespace.
+#              Unset (the default) watches all namespaces. Set it when the
+#              fleet runs identically named Clusters in several namespaces,
+#              since discovery keys targets by Cluster name.
+#
+# discoverySettings:
+#   namespace: capi-system
+discoverySettings: {}
+
 # Source-cluster identity stamped onto replicas as the
 # r8r.io/source-cluster label (--hub-name).
 hubName: hub
