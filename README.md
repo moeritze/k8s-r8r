@@ -49,14 +49,17 @@ hub + 2 spokes)` is a required status check on `main`.
 
 **What is being proven right now.** k8s-r8r is under active trial on a
 real ClusterAPI-managed **staging** fleet — the first run outside CI,
-against clusters the project did not create itself. That trial is
-generating findings faster than CI ever did: status conditions reporting
-`Ready=True` under policy denial, drift correction leaving no trace,
-replicas inheriting foreign GitOps ownership metadata, discovery pinned
-to a CAPI API version that upstream is removing, spoke RBAC wider than
-the policy universe. They are tracked in the open
-[issues](https://github.com/moeritze/k8s-r8r/issues) and being worked
-through. Treat the coverage above as CI-proven, not yet field-proven.
+against clusters the project did not create itself. That trial found more
+in its first days than CI had in its entire life, and the findings are
+being fixed rather than filed: status conditions reporting `Ready=True`
+under policy denial, drift correction leaving no trace, replicas
+inheriting foreign GitOps ownership metadata, and discovery pinned to a
+CAPI API version upstream is removing are all fixed on `main`. Spoke RBAC
+is still broader than the policy universe it should be scoped to
+([#29](https://github.com/moeritze/k8s-r8r/issues/29)), and the rest of
+what the trial surfaced is tracked in the open
+[issues](https://github.com/moeritze/k8s-r8r/issues). Treat the coverage
+above as CI-proven and now partly field-proven.
 
 **What is still unproven.** Production operation. No production adopter,
 no long-running deployment, upgrade paths untested, and day-2 failure
