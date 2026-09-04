@@ -56,6 +56,12 @@ spec:
         - --metrics-bind-address=0
         {{- end }}
         - --discovery-provider={{ .Values.discoveryProvider }}
+        {{- /* One flag per entry (range over a map is key-sorted, so the
+               rendering is stable) — a single comma-joined value could not
+               carry a value containing a comma. */}}
+        {{- range $key, $value := .Values.discoverySettings }}
+        - {{ printf "--discovery-setting=%s=%v" $key $value | quote }}
+        {{- end }}
         - --hub-name={{ .Values.hubName }}
         - --allowed-kinds={{ join "," .Values.allowedKinds }}
         {{- with .Values.stripMetadataKeys }}
