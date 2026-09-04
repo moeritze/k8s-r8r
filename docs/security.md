@@ -246,6 +246,66 @@ Two caveats when reading these:
 The event and the metric never carry payload: content is compared by hash
 only (see *Secret-safe telemetry* above).
 
+### The ownership label is the watch's membership predicate
+
+`app.kubernetes.io/managed-by: k8s-r8r` is not decoration. The spoke caches
+are built with a **server-side label selector** on it, which is what keeps hub
+memory bounded across a fleet (design D3 — the hub never caches replica
+payloads). A replica that loses that label leaves the informer completely: no
+add, no update, no delete is delivered for it again.
+
+That makes the label an attack surface, and not a subtle one. It is an
+`app.kubernetes.io/` convention label that plenty of other tooling writes:
+another controller claiming the object, a GitOps tool stamping its own
+ownership labels, an operator tidying labels by hand. Any of them evicts the
+replica from drift detection.
+
+The engine does not trust that label as its only evidence of ownership.
+`r8r.io/source-uid` carries the hub source object's UID; nothing but this
+operator writes it, and a UID is neither guessable nor reused when a source is
+deleted and recreated. Verification therefore keys on the source UID, using
+the live reads the reconcile already performs — no informer involved:
+
+| what the reconcile finds | what happens |
+|---|---|
+| both marks | normal drift comparison |
+| `r8r.io/source-uid` matches, `managed-by` rewritten | **repaired** — marks and content restored, which also returns the object to the cache's selector, so the watch works again |
+| neither mark | foreign object; the [conflict contract](#conflict-handling-as-a-security-control--design-d7) decides, and the default still refuses to touch it |
+
+| Signal | Fires when |
+|---|---|
+| `k8s_r8r_replica_ownership_lost_total{cluster,action="repaired"}` | a replica was outside the watch and has been put back |
+| `k8s_r8r_replica_ownership_lost_total{cluster,action="deleted"}` | a replica with a rewritten label was garbage-collected anyway |
+| `k8s_r8r_replica_ownership_lost_total{cluster,action="orphaned"}` | an inventory entry pointed at an unrecognisable object, so it was released **without deleting anything** |
+| `OwnershipRepaired` / `OwnershipStripped` / `ReplicaOrphaned` Warning events | the same three, naming the replica and the label |
+
+Read them like this:
+
+- **A climbing `repaired` count is a controller fight.** Something on that
+  spoke keeps taking the label back. Find it; the event names the label so
+  you know what to grep the other controller's config for.
+- **`orphaned` is the only one that implies manual work.** The engine will
+  not delete an object it cannot recognise, so an object may be left on the
+  spoke with nothing tracking it. Alert on this one.
+- A replica that lost its label **and** had its payload rewritten reports
+  *both* an ownership repair and a drift correction. That pair is the
+  strongest tampering evidence available; neither counter masks the other.
+
+Two limits worth knowing before you rely on this:
+
+- **Detection takes up to one resync interval.** The watch cannot see an
+  object outside its selector, so the periodic reconcile is what finds it —
+  `--spoke-resync`, 10h by default. Lower it if you need a tighter bound; it
+  moves the informer resync and the periodic reconcile together, which is the
+  correct coupling. The repair is self-healing, so the slow path is traversed
+  once per tampering event, not continuously.
+- **Replicas retained after a revocation are not verified.** Under
+  `revocationPolicy: Retain` the engine has undertaken not to write to the
+  replica any more. Repairing its ownership marks would break that
+  undertaking and would silently re-arm drift correction on material policy
+  no longer permits it to manage. A retained replica is released from the
+  engine's control; deleting it is your call, not the operator's.
+
 ## Supply chain
 
 A component that reads every Secret in a fleet is worth verifying before you

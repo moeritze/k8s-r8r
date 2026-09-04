@@ -24,6 +24,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -213,6 +214,75 @@ func (d *DriftDetector) Enqueue(key client.ObjectKey) {
 	case d.events <- event.GenericEvent{Object: rep}:
 	default:
 	}
+}
+
+// ReplicaOwnership classifies an object found at an inventoried replica's
+// name against the Replication that recorded it.
+//
+// The distinction exists because `app.kubernetes.io/managed-by: k8s-r8r` is
+// not just a label on a replica — it is the MEMBERSHIP PREDICATE OF THE DRIFT
+// WATCH. The spoke caches are built with a server-side selector on it and
+// driftHandler.observe filters on it again, so an object that loses the label
+// leaves the informer entirely: no add, no update, no delete is ever
+// delivered for it again (issue #36).
+//
+// It is also a conventional, widely-written label: it lives in the
+// `app.kubernetes.io/` namespace and plenty of other tooling stamps its own
+// value into it. `r8r.io/source-uid` does not have that problem — nothing but
+// this engine writes it, and a UID is neither guessable nor reused across a
+// delete/recreate of the source. That asymmetry is why recovery keys on the
+// source UID and not on managed-by.
+type ReplicaOwnership int
+
+const (
+	// OwnershipForeign: the object carries none of this Replication's
+	// ownership marks. It may belong to another controller, to another
+	// Replication, or to nobody. It is never repaired or taken over here —
+	// DecideConflict and its two-key consent contract govern it.
+	OwnershipForeign ReplicaOwnership = iota
+	// OwnershipManaged: the full marks are present — the managed-by label
+	// and a source-uid matching this Replication's source. The healthy state.
+	OwnershipManaged
+	// OwnershipStripped: the source-uid provenance label still identifies
+	// this Replication's source, but the managed-by label was rewritten or
+	// removed. The object is provably our replica AND is invisible to the
+	// drift watch. Restoring the label is what puts it back in the cache.
+	OwnershipStripped
+)
+
+// Event reasons for the ownership-verification outcomes. These are event
+// reasons, not per-target status reasons: neither outcome invents a slot in
+// status.targets (an orphaned entry is not a desired target, and a repaired
+// one is simply Ready again).
+const (
+	// ReasonOwnershipRepaired: an inventoried replica had lost its
+	// managed-by label and the engine restored its marks and content.
+	ReasonOwnershipRepaired = "OwnershipRepaired"
+	// ReasonOwnershipStripped: an inventoried replica had lost its
+	// managed-by label and was deleted during cleanup anyway, because its
+	// source-uid label still identified it.
+	ReasonOwnershipStripped = "OwnershipStripped"
+	// ReasonReplicaOrphaned: an inventory entry pointed at an object the
+	// engine cannot recognise, so the entry was released without deleting
+	// anything. Manual cleanup on the spoke may be needed.
+	ReasonReplicaOrphaned = "ReplicaOrphaned"
+)
+
+// ClassifyReplicaOwnership reports how an object's labels relate to the
+// Replication whose source has the given UID.
+//
+// Note the deliberate gap with IsManagedReplica, which requires both marks
+// and stays the GC safety gate and the conflict predicate: this function
+// exists precisely to name the case IsManagedReplica cannot express, "our
+// replica, relabelled".
+func ClassifyReplicaOwnership(labels map[string]string, sourceUID types.UID) ReplicaOwnership {
+	if labels[LabelSourceUID] != string(sourceUID) || sourceUID == "" {
+		return OwnershipForeign
+	}
+	if labels[LabelManagedBy] == ManagedByValue {
+		return OwnershipManaged
+	}
+	return OwnershipStripped
 }
 
 // driftHandler adapts informer events on one cluster into Replication

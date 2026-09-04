@@ -102,6 +102,19 @@ var (
 		Help: "Replicas whose diverged content the engine rewrote to match the source (payload hash mismatch, not informer traffic), labeled by target cluster.",
 	}, []string{labelCluster})
 
+	// replicaOwnershipLost counts inventoried replicas found WITHOUT the
+	// `app.kubernetes.io/managed-by: k8s-r8r` label — the spoke cache's
+	// membership predicate, so such a replica had dropped out of the drift
+	// watch entirely (issue #36). Distinct from driftCorrections: a rewritten
+	// ownership label is not payload divergence, and conflating the two would
+	// break the guarantee that a non-zero drift-correction count always means
+	// a replica's content was actually wrong. When a replica lost its label
+	// AND its content diverged, both counters move.
+	replicaOwnershipLost = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "k8s_r8r_replica_ownership_lost_total",
+		Help: "Inventoried replicas found without the k8s-r8r managed-by label (and therefore outside the drift watch), labeled by target cluster and by how the engine resolved it (repaired, deleted, orphaned).",
+	}, []string{labelCluster, labelAction})
+
 	// spokeBootstraps counts spoke bootstrap attempts by result.
 	spokeBootstraps = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "k8s_r8r_spoke_bootstraps_total",
@@ -134,6 +147,28 @@ func IncDriftEvent(cluster string) { driftEvents.WithLabelValues(cluster).Inc() 
 // rewrote on a target cluster. Call it only for real payload divergence, not
 // for repairs of the engine's own bookkeeping annotation.
 func IncDriftCorrection(cluster string) { driftCorrections.WithLabelValues(cluster).Inc() }
+
+// Resolutions of an inventoried replica found outside the drift watch. A
+// closed enumeration: these are the only values IncOwnershipLost accepts.
+const (
+	// OwnershipRepaired: the replica's marks were restored, which also
+	// returns it to the watch's label selector.
+	OwnershipRepaired = "repaired"
+	// OwnershipDeleted: the replica was garbage-collected despite the
+	// rewritten label, because its source-uid still identified it.
+	OwnershipDeleted = "deleted"
+	// OwnershipOrphaned: the object at the inventoried name was foreign, so
+	// the entry was released without deleting anything. The only resolution
+	// that implies manual work — alert on this one.
+	OwnershipOrphaned = "orphaned"
+)
+
+// IncOwnershipLost records one inventoried replica found without the
+// managed-by label, by how the engine resolved it (OwnershipRepaired,
+// OwnershipDeleted, OwnershipOrphaned).
+func IncOwnershipLost(cluster, action string) {
+	replicaOwnershipLost.WithLabelValues(cluster, action).Inc()
+}
 
 // IncSpokeBootstrap records one spoke bootstrap attempt.
 func IncSpokeBootstrap(success bool) { spokeBootstraps.WithLabelValues(resultLabel(success)).Inc() }
@@ -387,6 +422,7 @@ func init() {
 		revocations,
 		driftEvents,
 		driftCorrections,
+		replicaOwnershipLost,
 		spokeBootstraps,
 		tokenRotations,
 		replicas,
