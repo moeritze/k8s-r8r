@@ -57,8 +57,9 @@
       what happens when only one key turns.
 - [x] 5.3 `CHANGELOG.md`: **Changed** (breaking, with the migration) and
       **Added**.
-- [ ] 5.4 `obsidian/` vault notes — deferred: another change owns that
-      directory; the needed updates are listed in the PR body.
+- [x] 5.4 `obsidian/` vault notes — deferred: another change owns that
+      directory; the needed updates are listed in the PR body. Done in
+      PR #50.
 
 ## 6. Verification
 
@@ -67,6 +68,7 @@
       from inside an agent worktree pulls sibling worktrees into the analysis
       and reports pre-existing findings from them; identical count before and
       after this change).
-- [ ] 6.3 `make test-e2e` — not run locally (no docker available in this
+- [x] 6.3 `make test-e2e` — not run locally (no docker available in this
       environment); CI runs the kind-fleet job. No e2e case exercises the
-      conflict path today, so none needed updating.
+      conflict path today, so none needed updating. Green on PR #48 before
+      merge.

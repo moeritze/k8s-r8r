@@ -39,9 +39,10 @@
       two metrics and what separates them, the event, and the coalescing
       caveat.
 - [x] 4.2 `CHANGELOG.md`: entry under Unreleased.
-- [ ] 4.3 `obsidian/operations.md` (Metrics + Events) and
+- [x] 4.3 `obsidian/operations.md` (Metrics + Events) and
       `obsidian/replication-flow.md`: owned by a parallel change in this
-      sprint; the required edits are listed in the PR body.
+      sprint; the required edits are listed in the PR body. Done in PR #50
+      (also covers `obsidian/drift-detection.md`).
 
 ## 5. Verification
 
@@ -49,6 +50,7 @@
       pristine export of the tree: `golangci-lint run` inside a parallel agent
       worktree also analyses sibling worktrees, which produces unrelated
       `SA5011` noise from other agents' in-flight files.
-- [ ] 5.2 `make test-e2e` — not run locally (no docker on this machine); the
+- [x] 5.2 `make test-e2e` — not run locally (no docker on this machine); the
       CI `E2E (kind fleet, hub + 2 spokes)` job covers it. The existing
       "drift repair on replica edit" e2e case exercises the changed branch.
+      Green on PR #46 before merge.

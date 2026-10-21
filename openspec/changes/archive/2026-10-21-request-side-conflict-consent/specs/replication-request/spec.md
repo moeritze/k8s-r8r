@@ -18,7 +18,11 @@ Unknown `r8r.io/*` keys SHALL be rejected by the request controller so typos fai
 
 #### Scenario: Request without matching policy is not acted on
 - **WHEN** a Secret is annotated for replication but no `ReplicationPolicy` permits it
-- **THEN** no replicas are created, and the `Replication` object (or event on the source) reports a `PolicyDenied` condition naming the reason
+- **THEN** no replicas are created, and the `Replication` object carries a condition naming the denial reason. An event on the source MAY accompany the condition but SHALL NOT substitute for it: events expire, and the denial must stay discoverable for as long as the request stands.
+
+#### Scenario: Request resolves to no target at all
+- **WHEN** a source is annotated for replication and its `r8r.io/target-clusters` selector matches no ready cluster, so no target is ever evaluated against policy
+- **THEN** the `Replication` object reports that it resolved to no targets, distinguishably from a request that was denied by policy, even though no denial occurred and no denial event is emitted
 
 #### Scenario: Malformed conflict policy is rejected
 - **WHEN** a source carries `r8r.io/conflict-policy` with a value outside the closed set (including a differently cased spelling such as `overwrite`)

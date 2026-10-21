@@ -12,6 +12,9 @@ The system SHALL accept replication requests expressed as annotations on source 
 - `r8r.io/target-clusters: "<label selector>"` — selects target clusters by labels on discovered cluster inventory (empty selector selects no clusters; an explicit `*` is not supported).
 - `r8r.io/target-namespaces: "<comma-separated list>"` — target namespaces; defaults to the source namespace when omitted.
 - `r8r.io/target-name: "<name>"` — optional explicit name override for replicas; automatic renaming (prefix/suffix) SHALL NOT occur.
+- `r8r.io/conflict-policy: "Fail" | "Adopt" | "Overwrite"` — the strongest conflict handling this request consents to. The value set is closed and case-sensitive, matching the `ConflictPolicy` enum. An absent or empty value SHALL mean `Fail`: a request that says nothing about conflicts consents to nothing.
+
+Unknown `r8r.io/*` keys SHALL be rejected by the request controller so typos fail loudly rather than silently selecting nothing; the advisory webhook SHALL warn on them instead of rejecting, so an older webhook cannot block a request that uses a newer key.
 
 #### Scenario: Valid request creates a canonical Replication object
 - **WHEN** a Secret is annotated with `r8r.io/replicate: "true"` and target annotations, and at least one `ReplicationPolicy` permits the request
@@ -19,7 +22,19 @@ The system SHALL accept replication requests expressed as annotations on source 
 
 #### Scenario: Request without matching policy is not acted on
 - **WHEN** a Secret is annotated for replication but no `ReplicationPolicy` permits it
-- **THEN** no replicas are created, and the `Replication` object (or event on the source) reports a `PolicyDenied` condition naming the reason
+- **THEN** no replicas are created, and the `Replication` object carries a condition naming the denial reason. An event on the source MAY accompany the condition but SHALL NOT substitute for it: events expire, and the denial must stay discoverable for as long as the request stands.
+
+#### Scenario: Request resolves to no target at all
+- **WHEN** a source is annotated for replication and its `r8r.io/target-clusters` selector matches no ready cluster, so no target is ever evaluated against policy
+- **THEN** the `Replication` object reports that it resolved to no targets, distinguishably from a request that was denied by policy, even though no denial occurred and no denial event is emitted
+
+#### Scenario: Malformed conflict policy is rejected
+- **WHEN** a source carries `r8r.io/conflict-policy` with a value outside the closed set (including a differently cased spelling such as `overwrite`)
+- **THEN** the request is marked invalid with a message naming the annotation and listing the accepted values, and — where the advisory webhook is deployed — the write is rejected at apply time with the same message
+
+#### Scenario: Conflict policy the policy set cannot grant is admitted with a warning
+- **WHEN** a source requests a conflict policy that no `ReplicationPolicy` able to match it permits
+- **THEN** the write is admitted with a warning naming the annotation, because the request is otherwise valid and only its conflict handling falls back to the weaker of the two keys
 
 ### Requirement: Kind allowlist for request acceptance
 The system SHALL only accept replication requests for kinds on the configured allowlist. The launch allowlist is `Secret` and `ConfigMap`. The internal pipeline SHALL be kind-agnostic so extending the allowlist requires no API change.
@@ -36,15 +51,27 @@ The system SHALL only accept replication requests for kinds on the configured al
 - **THEN** the operator marks it with a `NotAuthoritative` condition and does not replicate anything based on it
 
 ### Requirement: Replication status reports fanout state
-Each `Replication` object SHALL expose: a summary (`desiredTargets`, `readyTargets`, `failedTargets`), an aggregate `Ready` condition, per-target detail entries only for non-ready targets capped at a fixed limit with an overflow count, and the observed source content hash. Status writes SHALL be skipped when nothing changed.
+Each `Replication` object SHALL expose: a summary (`desiredTargets`, `readyTargets`, `failedTargets`), an aggregate `Ready` condition, a `TargetsResolved` condition reporting whether the request resolved to any target, per-target detail entries only for non-ready targets capped at a fixed limit with an overflow count, and the observed source content hash. Status writes SHALL be skipped when nothing changed.
+
+`Ready` SHALL answer "is everything that was asked for actually replicated?". A `Replication` that is not being deleted and has zero desired targets SHALL therefore report `Ready: False` with a reason distinguishing it from a target failure: replicating nothing is not a vacuous success, and it is the state an operator most needs to alert on.
+
+Each condition on a `Replication` SHALL have exactly one writing controller, and controllers SHALL NOT write conditions they do not own. Two controllers writing one condition produce a status whose value depends on write order, and — because each write re-triggers the other controller — unbounded status churn.
 
 #### Scenario: Healthy fanout has compact status
 - **WHEN** a source is successfully replicated to all selected targets
-- **THEN** status contains summary counts and `Ready: True`, with an empty per-target detail list
+- **THEN** status contains summary counts, `Ready: True`, and `TargetsResolved: True`, with an empty per-target detail list
+
+#### Scenario: Zero resolved targets is not reported as ready
+- **WHEN** a `Replication` exists for a source that still requests replication, but its resolved target set is empty — every candidate denied by policy, or no candidate produced at all
+- **THEN** status reports `desiredTargets: 0` together with `Ready: False`, and `TargetsResolved: False` naming whether the cause was a policy denial or an empty resolution
 
 #### Scenario: Failing target is visible
 - **WHEN** replication to one target cluster fails
 - **THEN** status summary shows one failed target and the detail list contains an entry naming the cluster, namespace, and error reason
+
+#### Scenario: Settled status is not rewritten
+- **WHEN** every controller that writes to a `Replication` has reconciled it and nothing about the request, the policy set, or the fleet has changed
+- **THEN** no further status write occurs, regardless of how many controllers observe the object
 
 ### Requirement: Request removal triggers cleanup
 Removing the replication annotations from a source SHALL cause deletion of all its replicas and its `Replication` object, subject to the policy revocation setting in effect.
