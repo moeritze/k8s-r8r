@@ -12,6 +12,9 @@ The system SHALL accept replication requests expressed as annotations on source 
 - `r8r.io/target-clusters: "<label selector>"` — selects target clusters by labels on discovered cluster inventory (empty selector selects no clusters; an explicit `*` is not supported).
 - `r8r.io/target-namespaces: "<comma-separated list>"` — target namespaces; defaults to the source namespace when omitted.
 - `r8r.io/target-name: "<name>"` — optional explicit name override for replicas; automatic renaming (prefix/suffix) SHALL NOT occur.
+- `r8r.io/conflict-policy: "Fail" | "Adopt" | "Overwrite"` — the strongest conflict handling this request consents to. The value set is closed and case-sensitive, matching the `ConflictPolicy` enum. An absent or empty value SHALL mean `Fail`: a request that says nothing about conflicts consents to nothing.
+
+Unknown `r8r.io/*` keys SHALL be rejected by the request controller so typos fail loudly rather than silently selecting nothing; the advisory webhook SHALL warn on them instead of rejecting, so an older webhook cannot block a request that uses a newer key.
 
 #### Scenario: Valid request creates a canonical Replication object
 - **WHEN** a Secret is annotated with `r8r.io/replicate: "true"` and target annotations, and at least one `ReplicationPolicy` permits the request
@@ -24,6 +27,14 @@ The system SHALL accept replication requests expressed as annotations on source 
 #### Scenario: Request resolves to no target at all
 - **WHEN** a source is annotated for replication and its `r8r.io/target-clusters` selector matches no ready cluster, so no target is ever evaluated against policy
 - **THEN** the `Replication` object reports that it resolved to no targets, distinguishably from a request that was denied by policy, even though no denial occurred and no denial event is emitted
+
+#### Scenario: Malformed conflict policy is rejected
+- **WHEN** a source carries `r8r.io/conflict-policy` with a value outside the closed set (including a differently cased spelling such as `overwrite`)
+- **THEN** the request is marked invalid with a message naming the annotation and listing the accepted values, and — where the advisory webhook is deployed — the write is rejected at apply time with the same message
+
+#### Scenario: Conflict policy the policy set cannot grant is admitted with a warning
+- **WHEN** a source requests a conflict policy that no `ReplicationPolicy` able to match it permits
+- **THEN** the write is admitted with a warning naming the annotation, because the request is otherwise valid and only its conflict handling falls back to the weaker of the two keys
 
 ### Requirement: Kind allowlist for request acceptance
 The system SHALL only accept replication requests for kinds on the configured allowlist. The launch allowlist is `Secret` and `ConfigMap`. The internal pipeline SHALL be kind-agnostic so extending the allowlist requires no API change.
