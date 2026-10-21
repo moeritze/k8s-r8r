@@ -31,6 +31,22 @@ The chart's default image repository and tag point at the image published
 for that release, so the operator image is pulled automatically. See
 [releasing.md](releasing.md) for how releases are cut.
 
+### Trial the newest `main`
+
+Every push to `main` also publishes an edge build — for trying merged fixes
+before the next tag, not for adoption. Take the first 7 characters of the
+commit SHA you want and:
+
+```sh
+helm upgrade --install k8s-r8r oci://ghcr.io/moeritze/charts/k8s-r8r \
+  --version 0.0.0-main.g<short-sha> \
+  --namespace k8s-r8r-system --create-namespace
+```
+
+The chart pins the matching `sha-<short-sha>` image. Edge builds are signed
+with a different identity than releases and are pruned after 30 days; see
+[releasing.md — Edge channel](releasing.md#edge-channel-every-push-to-main).
+
 The rest of this quickstart is the **development path**: build the image
 locally and run it on a kind fleet.
 

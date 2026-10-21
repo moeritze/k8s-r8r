@@ -161,6 +161,77 @@ Kyverno, require `issuer: https://token.actions.githubusercontent.com` and
 `ghcr.io/moeritze/k8s-r8r` image. Do this and an unsigned or third-party image
 cannot start, even if someone edits the Deployment.
 
+## Edge channel (every push to `main`)
+
+> **For trials, not adoption.** Edge builds are unreleased commits: no
+> changelog entry, no compatibility promise, deleted after 30 days. Run a
+> tagged release for anything you intend to keep.
+
+Every push to `main` runs `.github/workflows/edge.yml`, which publishes the
+same artifact set as a release, minus the GitHub release:
+
+| Artifact | Location |
+|---|---|
+| Operator image (multi-arch) | `ghcr.io/moeritze/k8s-r8r:sha-<short>` (immutable) and `:main` (moves to the newest commit) |
+| Helm chart | `oci://ghcr.io/moeritze/charts/k8s-r8r`, chart version `0.0.0-main.g<short>`, `appVersion: sha-<short>` |
+
+`<short>` is the first 7 characters of the commit SHA. Edge never moves
+`:latest`. The `0.0.0-` prefix sorts below every real version, so
+`helm upgrade` without `--version`, `helm search` and Artifact Hub never pick
+an edge chart over a release. The `g` before the SHA keeps the version valid
+semver when a short SHA is all digits with a leading zero.
+
+Signatures, SBOM and SLSA provenance are produced by the same composite
+actions (`.github/actions/publish-image`, `.github/actions/publish-chart`)
+the release lane uses.
+
+### Install an edge build
+
+Pick the commit from the `main` history (or the edge run's log) and install by
+chart version — that pins the image through `appVersion`, so a later merge
+cannot change what your trial runs:
+
+```sh
+helm upgrade --install k8s-r8r oci://ghcr.io/moeritze/charts/k8s-r8r \
+  --version 0.0.0-main.g1a2b3c4 \
+  --namespace k8s-r8r-system --create-namespace
+```
+
+`:main` is for "what is newest right now"; don't pin a trial to it.
+
+### Verify an edge build
+
+Edge artifacts are signed with a **different identity** — the edge workflow
+on `main`:
+
+```sh
+cosign verify \
+  --certificate-identity "https://github.com/moeritze/k8s-r8r/.github/workflows/edge.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/moeritze/k8s-r8r:sha-1a2b3c4
+
+cosign verify \
+  --certificate-identity "https://github.com/moeritze/k8s-r8r/.github/workflows/edge.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/moeritze/charts/k8s-r8r:0.0.0-main.g1a2b3c4
+```
+
+The lanes are separated by construction: a verifier (or admission policy)
+pinned to the `release.yml@refs/tags/v…` identity rejects every edge artifact,
+and one pinned to `edge.yml@refs/heads/main` rejects every release. Provenance
+verifies the same way as for a release (`gh attestation verify
+oci://ghcr.io/moeritze/k8s-r8r:sha-1a2b3c4 --repo moeritze/k8s-r8r`).
+
+### Retention
+
+`.github/workflows/prune-edge.yml` runs weekly and deletes `sha-*` image tags
+and `0.0.0-main.*` chart versions older than 30 days, together with the
+per-platform manifests and referrers only they used. `:main`, `:latest` and
+release tags are never matched. It never blanket-deletes untagged versions —
+those are the children of live images. Manual runs default to dry-run;
+scheduled runs stay dry-run until the repository variable `PRUNE_EDGE_LIVE` is
+set to `true`.
+
 ## One-time setup note (ghcr visibility)
 
 GitHub Container Registry packages may default to **private** on first
@@ -171,7 +242,7 @@ package). Until then, anonymous pulls — and anonymous *verification* — fail.
 
 ## Authentication
 
-The workflow authenticates to ghcr with the workflow's `GITHUB_TOKEN`
+Both publishing workflows (`release.yml`, `edge.yml`) authenticate to ghcr with the workflow's `GITHUB_TOKEN`
 (`packages: write`); no extra secrets are configured, and no signing key
 exists to leak. Signing and attestation additionally require `id-token:
 write` (Sigstore OIDC) and `attestations: write`, granted **at job scope

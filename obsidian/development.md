@@ -18,6 +18,14 @@ kubebuilder project, module `github.com/moeritze/k8s-r8r`, API group `r8r.io/v1a
 
 Pushing a semver tag (`v*`) triggers `.github/workflows/release.yml`: multi-arch image (amd64/arm64) → `ghcr.io/moeritze/k8s-r8r:<tag>` (stable tags also move `:latest`), Helm chart → `oci://ghcr.io/moeritze/charts/k8s-r8r` (chart version = tag without `v`, appVersion = tag, so the chart's default image tag matches the published image), plus a GitHub release with generated notes. Tags containing `-` (`-alpha.N` convention) are prereleases and never move `:latest`. Install side: [[operations]]; full walkthrough: `../docs/releasing.md`.
 
+### Edge lane
+
+`.github/workflows/edge.yml` publishes each commit on `main` as a trial build: image `:sha-<short>` + moving `:main`, chart `0.0.0-main.g<short>` with `appVersion: sha-<short>`. No `:latest`, no GitHub release, no re-test (branch protection already ran the full check set on the PR). `concurrency: edge` with cancel-in-progress, so `:main` tracks the newest merge. Naming, verification identity and pruning: [[operations#Edge builds|operations]].
+
+To trial a merged fix before a tag: `helm upgrade --install k8s-r8r oci://ghcr.io/moeritze/charts/k8s-r8r --version 0.0.0-main.g<short-sha> -n k8s-r8r-system --create-namespace`.
+
+Both lanes call the same composite actions, `.github/actions/publish-image` and `.github/actions/publish-chart`. Composite, **not** a reusable workflow: a reusable workflow becomes the Sigstore certificate identity for both lanes and would break the documented `release.yml@refs/tags/v…` verify commands. A composite action runs inside the caller's job, so each lane signs as itself. Tag selection (the `:latest` rule) stays in `release.yml`. Multi-arch builds cross-compile (`FROM --platform=$BUILDPLATFORM` builder stage, no QEMU) and use the `type=gha` layer cache; the QEMU baseline was 25m35s for the alpha.2 build step.
+
 ### Supply chain (what a release proves)
 
 A fleet-wide Secret reader has to be verifiable before anyone runs it ([[security-model]]):

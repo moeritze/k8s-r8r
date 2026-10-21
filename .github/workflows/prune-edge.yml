@@ -1,0 +1,61 @@
+name: Prune edge artifacts
+
+# Deletes edge artifacts (published by edge.yml) older than 30 days:
+#   - image tags  sha-<7>              on ghcr.io/moeritze/k8s-r8r
+#   - chart tags  0.0.0-main.g<7>      on ghcr.io/moeritze/charts/k8s-r8r
+# main, latest and release tags are never matched (anchored regexes + excludes).
+# Never blanket-delete untagged versions: those are the per-platform children
+# and attestation referrers of LIVE images. ghcr-cleanup-action deletes a
+# tagged index together with its own children only (design D5).
+#
+# Dry-run by default. Scheduled runs stay dry-run until the repository variable
+# PRUNE_EDGE_LIVE is set to "true" (do that once a dry-run log has been checked).
+
+on:
+  schedule:
+    - cron: "17 4 * * 1" # weekly, Monday 04:17 UTC
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Only log what would be deleted
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: prune-edge
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: Prune edge image + chart versions
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write # delete package versions
+    env:
+      DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry-run) || (github.event_name == 'schedule' && vars.PRUNE_EDGE_LIVE != 'true') }}
+    steps:
+      - name: Prune edge image tags (sha-*)
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          package: k8s-r8r
+          use-regex: true
+          delete-tags: ^sha-[0-9a-f]{7}$
+          exclude-tags: ^(main|latest|v.*)$
+          older-than: 30 days
+          delete-untagged: false
+          delete-orphaned-images: true
+          dry-run: ${{ env.DRY_RUN }}
+
+      - name: Prune edge chart versions (0.0.0-main.*)
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          package: charts/k8s-r8r
+          use-regex: true
+          delete-tags: ^0\.0\.0-main\.g[0-9a-f]{7}$
+          exclude-tags: ^(main|latest|v.*)$
+          older-than: 30 days
+          delete-untagged: false
+          delete-orphaned-images: true
+          dry-run: ${{ env.DRY_RUN }}
