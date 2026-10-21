@@ -1,0 +1,72 @@
+name: Edge
+
+# Publishes an installable trial build of every commit on main:
+#   - multi-arch operator image -> ghcr.io/moeritze/k8s-r8r:main (moving) + :sha-<7> (immutable)
+#   - Helm chart                -> oci://ghcr.io/moeritze/charts/k8s-r8r 0.0.0-main.g<7>
+#                                  (appVersion sha-<7>, so it installs the matching image)
+# Same guarantees as a release (cosign keyless, SBOM, SLSA provenance), via the
+# shared composite actions. Never :latest, no GitHub release. Signing identity:
+# edge.yml@refs/heads/main, so a verifier pinned to release.yml rejects edge.
+# No lint/test here: branch protection already required them on the PR.
+# Old sha-* / 0.0.0-main.* artifacts are pruned by prune-edge.yml.
+# See docs/releasing.md "Edge channel".
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+# Rapid merges cancel the older build so :main always tracks the newest commit.
+# buildx pushes the index atomically: a cancelled run publishes nothing half-done.
+concurrency:
+  group: edge
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: ghcr.io/moeritze/k8s-r8r
+  CHART_REPO: ghcr.io/moeritze/charts
+
+jobs:
+  publish-edge:
+    name: Publish edge image + chart (ghcr)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push image, chart, cosign signatures, attestation referrers
+      id-token: write # cosign keyless (Sigstore OIDC) + attestation signing
+      attestations: write # actions/attest-build-provenance
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The 'g' prefix keeps the prerelease identifier alphanumeric: an
+      # all-digit SHA with a leading zero (0123456) is invalid semver (design D2).
+      - name: Compute edge names
+        id: names
+        run: |
+          set -euo pipefail
+          short="${GITHUB_SHA::7}"
+          {
+            echo "short=${short}"
+            echo "chart-version=0.0.0-main.g${short}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish image
+        uses: ./.github/actions/publish-image
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          tags: ${{ env.IMAGE_NAME }}:main,${{ env.IMAGE_NAME }}:sha-${{ steps.names.outputs.short }}
+          version: sha-${{ steps.names.outputs.short }}
+          revision: ${{ github.sha }}
+
+      - name: Publish chart
+        uses: ./.github/actions/publish-chart
+        with:
+          chart-repo: ${{ env.CHART_REPO }}
+          chart-version: ${{ steps.names.outputs.chart-version }}
+          app-version: sha-${{ steps.names.outputs.short }}
