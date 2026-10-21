@@ -11,7 +11,7 @@ With no `ReplicationPolicy` objects present, the system SHALL replicate nothing.
 
 #### Scenario: No policies exist
 - **WHEN** a source object carries valid replication annotations and no `ReplicationPolicy` exists
-- **THEN** no replicas are created and the request is reported as denied
+- **THEN** no replicas are created and the request is reported as denied on the `Replication` object's status, for as long as the request stands
 
 ### Requirement: Allowlist matching dimensions
 A `ReplicationPolicy` SHALL express, as allowlists: source namespaces (exact names or label selector), source kinds, target clusters (label selector over discovered cluster inventory), and target namespaces. A request is permitted by a policy only if all dimensions match. Policies SHALL NOT contain deny rules.
@@ -41,9 +41,15 @@ Each policy SHALL carry options that gate engine behavior for requests it permit
 ### Requirement: Reconcile-time enforcement is authoritative
 Policy SHALL be re-evaluated on every reconcile of every `Replication`. Admission-time validation is advisory only. When a policy change withdraws permission for existing replicas, the operator SHALL act per the applicable `revocationPolicy`: `Delete` removes the replicas; `Retain` leaves them but marks the `Replication` with a `PolicyRevoked` condition and stops updating them.
 
+Revocation SHALL leave a durable status signal. Events describing the revocation expire, and a condition that is removed once the revocation has been fully processed leaves no record at all; a `Replication` whose permission was withdrawn SHALL NOT come to rest reporting readiness.
+
 #### Scenario: Policy tightened after replication
 - **WHEN** an admin edits a policy so an existing replica set of targets is no longer permitted, and the effective revocation policy is `Delete`
 - **THEN** the affected replicas are deleted on the next reconcile and status reflects the revocation
+
+#### Scenario: Status after a Delete revocation has settled
+- **WHEN** every replica removed by a `Delete` revocation is gone, the revocation events have expired, and the source still requests replication
+- **THEN** the `Replication` still reports `Ready: False` — its targets resolved to nothing — rather than reporting readiness with zero targets
 
 ### Requirement: Policy authoring is admin-scoped
 `ReplicationPolicy` SHALL be a cluster-scoped resource. Project-provided RBAC manifests SHALL grant write access only to cluster administrators and read access to the operator. Replication SHALL grant developers no privileges beyond objects they can already write: the system only fans out objects the requester could already modify, to destinations policy allows.
