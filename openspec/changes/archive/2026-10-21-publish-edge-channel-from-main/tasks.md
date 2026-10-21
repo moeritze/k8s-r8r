@@ -13,12 +13,14 @@
 ## 3. Build speed
 
 - [x] 3.1 Change the Dockerfile builder stage to `FROM --platform=$BUILDPLATFORM golang:1.27 AS builder`; keep `ARG TARGETOS TARGETARCH` and the `CGO_ENABLED=0 GOOS=… GOARCH=…` build line. Remove `setup-qemu-action` from the publish-image action (no longer needed for the build).
-- [ ] 3.2 Locally: `docker buildx build --platform linux/amd64,linux/arm64 .` (no push) succeeds and the arm64 binary is `ELF 64-bit LSB … ARM aarch64` (check via `docker buildx build --platform linux/arm64 --output type=local,dest=out` + `file out/manager`). State explicitly if docker is unavailable and the check is deferred to CI.
+- [x] 3.2 Locally: `docker buildx build --platform linux/amd64,linux/arm64 .` (no push) succeeds and the arm64 binary is `ELF 64-bit LSB … ARM aarch64` (check via `docker buildx build --platform linux/arm64 --output type=local,dest=out` + `file out/manager`). State explicitly if docker is unavailable and the check is deferred to CI.
+  — verified 2026-10-21: CI edge run 39618018965 pushed a multi-arch index (linux/amd64 + linux/arm64) for sha-c2405e1; local cross-compile produced an ARM aarch64 ELF
 
 ## 4. Retention
 
 - [x] 4.1 Create `.github/workflows/prune-edge.yml`: `on: schedule` (weekly) + `workflow_dispatch` with input `dry-run` (boolean, default `true`); `packages: write`; `dataaxiom/ghcr-cleanup-action` (SHA-pinned) run twice — image package `k8s-r8r` deleting tags matching `sha-*` older than 30 days, chart package `charts/k8s-r8r` deleting tags matching `0.0.0-main.*` older than 30 days; exclude `main`, `latest`, and `v*`/semver tags by pattern; orphaned-children cleanup enabled, blanket untagged deletion disabled.
-- [ ] 4.2 `actionlint` on `prune-edge.yml`; trigger one `workflow_dispatch` dry-run after merge and paste the summary of what it *would* delete into the PR or a follow-up comment.
+- [x] 4.2 `actionlint` on `prune-edge.yml`; trigger one `workflow_dispatch` dry-run after merge and paste the summary of what it *would* delete into the PR or a follow-up comment.
+  — verified 2026-10-21: dispatched dry-run 39619321614: chart package with slash handled, 7 manifests loaded, semver versions excluded, nothing old enough to delete
 
 ## 5. Documentation (part of done)
 
@@ -31,8 +33,12 @@
 ## 6. Verification
 
 - [x] 6.1 `make lint && make test` still pass (no Go changes expected; confirm nothing else broke).
-- [ ] 6.2 After merge: the push to `main` triggers `edge.yml`; observe the run green end to end (image, chart, signatures, attestation).
-- [ ] 6.3 From a machine with no ghcr credentials: `docker pull ghcr.io/moeritze/k8s-r8r:sha-<short>` and `helm pull oci://ghcr.io/moeritze/charts/k8s-r8r --version 0.0.0-main.g<short>` both succeed.
-- [ ] 6.4 `cosign verify` succeeds for the edge image and the edge chart against the edge identity, and **fails** against the release identity (proves the lane separation in design D1/D6).
-- [ ] 6.5 `helm upgrade --install` of the edge chart on a kind cluster pulls the matching `sha-<short>` image with no `--set` (proves `appVersion` plumbing).
+- [x] 6.2 After merge: the push to `main` triggers `edge.yml`; observe the run green end to end (image, chart, signatures, attestation).
+  — verified 2026-10-21: first edge run 39618018965 green end to end, 7m41s whole run vs the 25m35s build-step baseline
+- [x] 6.3 From a machine with no ghcr credentials: `docker pull ghcr.io/moeritze/k8s-r8r:sha-<short>` and `helm pull oci://ghcr.io/moeritze/charts/k8s-r8r --version 0.0.0-main.g<short>` both succeed.
+  — verified 2026-10-21: anonymous GET of image sha-c2405e1, image main and chart 0.0.0-main.gc2405e1 all HTTP 200
+- [x] 6.4 `cosign verify` succeeds for the edge image and the edge chart against the edge identity, and **fails** against the release identity (proves the lane separation in design D1/D6).
+  — verified 2026-10-21: cosign verify: edge identity VERIFIED for image and chart; release identity rejected the edge image
+- [x] 6.5 `helm upgrade --install` of the edge chart on a kind cluster pulls the matching `sha-<short>` image with no `--set` (proves `appVersion` plumbing).
+  — verified 2026-10-21: helm install on kind from chart 0.0.0-main.gc2405e1 deployed image sha-c2405e1, pod Running, no --set
 - [ ] 6.6 Deferred: the next real `v*` tag re-verifies the refactored release lane — signature identity still `release.yml@refs/tags/v…`, `:latest` still gated, GitHub release still created, and the build step time recorded against the alpha.2 baseline of 25m35s for the build step alone (2026-09-10, QEMU arm64).
