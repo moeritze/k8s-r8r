@@ -17,6 +17,16 @@ Replica desired/ready/failed gauges (per cluster) · policy/webhook denial count
 
 A source update moves the first and not the second. A replica edited on a spoke moves both. Caveats (silent annotation-only repair, event coalescing): [[drift-detection]].
 
+**Ownership losses are a third, separate counter.** `k8s_r8r_replica_ownership_lost_total{cluster,action}` counts inventoried replicas found without `app.kubernetes.io/managed-by: k8s-r8r` — i.e. outside the drift watch — by how the engine resolved them:
+
+| `action` | Meaning | Alert? |
+|---|---|---|
+| `repaired` | own `r8r.io/source-uid`, label restored, back in the watch | a *climbing* rate means something on that spoke keeps taking the label back |
+| `deleted` | own `r8r.io/source-uid`, garbage-collected anyway | no |
+| `orphaned` | inventory pointed at an object the engine cannot recognise; entry released, **nothing deleted** | **yes** — the only one implying manual cleanup on the spoke |
+
+A stripped label over identical content moves this counter and not `drift_corrections_total`; a replica that lost the label *and* had its payload rewritten moves both. Mechanism: [[drift-detection#Ownership verification|ownership verification]].
+
 **Discovery health** (`k8s_r8r_discovery_up{provider}`, `k8s_r8r_discovery_clusters{provider}`) comes from the [[cluster-discovery|provider itself]], not from the runtime manager. `k8s_r8r_clusters` counts registered *runtimes* and reads 0 both when discovery is broken and when the fleet is genuinely empty — that ambiguity is what kept a total discovery outage invisible (#28). Read them together:
 
 | `discovery_up` | `discovery_clusters` | meaning |
@@ -27,7 +37,7 @@ A source update moves the first and not the second. A replica edited on a spoke 
 
 ## Troubleshooting
 
-**Zero clusters discovered.** First check `k8s_r8r_discovery_up`. If it is 1, the fleet really has no `Cluster` objects the provider can see — and since the provider's namespace setting is unreachable in a deployed operator ([#37](https://github.com/moeritze/k8s-r8r/issues/37), [[cluster-discovery|provider settings]]) the watch is cluster-wide, so this means the hub genuinely has none. Not an operator fault. If it is 0, check the negotiated CAPI version in the operator log:
+**Zero clusters discovered.** First check `k8s_r8r_discovery_up`. If it is 1, the fleet really has no `Cluster` objects the provider can see — with the default the watch is cluster-wide, so this means the hub genuinely has none; if `--discovery-setting namespace=…` (chart `discoverySettings.namespace`) is set, check the `Cluster` objects actually live in that namespace ([[cluster-discovery|provider settings]]). Not an operator fault. If it is 0, check the negotiated CAPI version in the operator log:
 
 ```sh
 kubectl -n k8s-r8r-system logs deploy/k8s-r8r | grep -i 'ClusterAPI'
@@ -39,7 +49,7 @@ kubectl -n k8s-r8r-system logs deploy/k8s-r8r | grep -i 'ClusterAPI'
 
 Note the pod stays **Ready** through all of these: readiness reflects hub informer sync only, by design. Discovery health lives in the metric, not in the probe.
 
-**Drift keeps recurring on one spoke.** The signature is *one* `DriftCorrected` event and a *climbing* `k8s_r8r_drift_corrections_total{cluster}` — the event coalesced, the counter did not. That pairing means the same replica is being rewritten over and over with the same content, which is a competing controller (another replicator, a GitOps tool reconciling the object back) or a human editing in a loop. Compare the `observed` hash in the event across occurrences: a stable observed hash points at a controller with its own desired state; a changing one points at hand edits. If the counter is flat but you expected corrections, check [#36](https://github.com/moeritze/k8s-r8r/issues/36) — a replica whose `managed-by` label was rewritten is invisible to drift detection entirely.
+**Drift keeps recurring on one spoke.** The signature is *one* `DriftCorrected` event and a *climbing* `k8s_r8r_drift_corrections_total{cluster}` — the event coalesced, the counter did not. That pairing means the same replica is being rewritten over and over with the same content, which is a competing controller (another replicator, a GitOps tool reconciling the object back) or a human editing in a loop. Compare the `observed` hash in the event across occurrences: a stable observed hash points at a controller with its own desired state; a changing one points at hand edits. If the counter is flat but you expected corrections, check `k8s_r8r_replica_ownership_lost_total{cluster}` — a replica whose `managed-by` label was rewritten drops out of the watch, and the periodic reconcile (up to `--spoke-resync`) finds it as an ownership repair, which counts as drift only if the payload diverged too.
 
 **A `Replication` reports `Conflict` after upgrading from `v0.1.0-alpha.1`.** Conflict handling is now a two-key turn ([[replication-flow#Conflict handling is a two-key turn|why]]): a policy grant alone no longer takes over a pre-existing object. The `Conflict` message names which key is missing — if it says the request does not set `r8r.io/conflict-policy`, add that annotation to the source.
 
@@ -47,13 +57,14 @@ Note the pod stays **Ready** through all of these: readiness reflects hub inform
 
 Lifecycle transitions, rate-limited per object+reason (5m cooldown, changed messages pass) so flapping targets can't flood. [[security-model|Never any payload data]]. They land on two different objects, which matters when you go looking for them:
 
-- **On the `Replication`** (engine): `Replicated`, `Adopted`, `CleanedUp` (Normal); `NoTargets`, `PolicyDenied`, `Conflict`, `ConflictOverwritten`, `DriftCorrected`, `PolicyRevoked`, `ClusterGone` (Warning).
+- **On the `Replication`** (engine): `Replicated`, `Adopted`, `CleanedUp` (Normal); `NoTargets`, `PolicyDenied`, `Conflict`, `ConflictOverwritten`, `DriftCorrected`, `OwnershipRepaired`, `OwnershipStripped`, `ReplicaOrphaned`, `PolicyRevoked`, `ClusterGone` (Warning).
 - **On the annotated source object** (request controller): `KindNotEnabled`, `InvalidAnnotations`, `PolicyDenied`, `NameConflict` (Warning) — these fire before a `Replication` exists, or explain why one has fewer targets than asked.
 
-Two are newer than the rest:
+Some are newer than the rest:
 
 - **`NoTargets`** — the `Ready` transition for a request that resolved to nothing. It replaced the spurious "Replicated 0/0 targets ready" success event a denied request used to emit on every reconcile ([[replication-flow#5. Status: one writer per condition|condition ownership]]).
 - **`DriftCorrected`** — `restored replica <cluster>/<ns>/<name>: observed content sha256:…, expected sha256:…`. Only real content divergence; an annotation-only repair is silent by design.
+- **`OwnershipRepaired` / `OwnershipStripped` / `ReplicaOrphaned`** — the three outcomes of ownership verification: a replica that lost its `managed-by` label was restored, was deleted during cleanup anyway (its `r8r.io/source-uid` still identified it), or its inventory entry pointed at an unrecognisable object and was released without deleting anything. Replica ref and label names only. They add nothing to `status.nonReadyTargets` — a repaired replica is legitimately Ready again ([[drift-detection#Ownership verification|mechanism]]).
 
 The 5m cooldown is the contract, not a bug — but it means the event stream **understates the rate** of recurring drift, because identical repeats coalesce. Read the rate off `k8s_r8r_drift_corrections_total`, which is deliberately not rate-limited. Event = "this happened, here is which object"; metric = "and it is happening N times a minute".
 
@@ -70,13 +81,13 @@ Summary counts + conditions; per-target detail only for non-ready targets, cappe
 - **`Ready=False` on a `Replication`** is now the primary signal, and it is truthful: a request that asked for replication and got none reports `Ready=False`/`NoTargets`, whether the cause was a denial, a revocation, or a typo'd selector. Replicating nothing is no longer a vacuous success. An Argo CD Lua health check keyed on `Ready` is therefore safe to write.
 - **`TargetsResolved=False`** says *why* nothing resolved: `PolicyDenied` (candidates existed, policy refused them — fix the policy or the request) versus `NoTargets` (the `r8r.io/target-clusters` selector matched no *ready* cluster; policy was never consulted, so there is no denial event to look for).
 - **`k8s_r8r_drift_corrections_total` rising** — a replica's payload was actually wrong and got restored. Not `k8s_r8r_drift_events_total`, which rises during normal fanout.
+- **`k8s_r8r_replica_ownership_lost_total{action="orphaned"}` non-zero** — an object may be left on a spoke with nothing tracking it; the `ReplicaOrphaned` event names it. `repaired` climbing is worth a look too (a controller fight over the label), but it self-heals.
 - Still useful as corroboration: the `PolicyDenied` / `PolicyRevoked` events and `k8s_r8r_policy_denials_total` / `k8s_r8r_revocations_total`.
 
 *Upgrading from `v0.1.0-alpha.1`:* Replications that reported `Ready: True` with `0/0 targets ready` flip to `Ready: False` on the first reconcile after upgrade. Nothing about what is replicated changes — only whether the object admits it.
 
 ## What you still cannot alert on
 
-- **A replica whose `managed-by` label was rewritten** ([#36](https://github.com/moeritze/k8s-r8r/issues/36)). It leaves the label-filtered spoke cache, so it never reaches a reconcile: no drift event, no correction counter, and status keeps reporting the target ready. The correction signal above cannot cover it — an object the engine never looks at is never counted. Detail: [[drift-detection]].
 - **The gap between the spoke SA's grant and the policy universe** ([#29](https://github.com/moeritze/k8s-r8r/issues/29)). Nothing reports how much wider the bootstrapped RBAC is than what any policy permits; the only lever is the `--allowed-kinds` flag. Detail: [[security-model]].
 
 ## HA
