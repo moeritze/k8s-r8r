@@ -34,6 +34,7 @@ Parsed by `internal/annotations` (shared with the [[security-model|webhook]]). D
 - one predicate (`isStrippedKey`) feeds both the replica and the canonical hash. Stripping in only one of them would make `SourceHash(replica) != SourceHash(source)` forever → apply on every reconcile → [[drift-detection|drift]] event → enqueue → hot loop against every spoke.
 - applied via server-side apply (field manager `k8s-r8r`) over the push `Transport` using the spoke's [[security-model|bootstrapped SA token]]
 - a replica whose stored hash no longer matches is rewritten — and the write's two sub-cases are *not* the same event: diverged **content** is a reported [[drift-detection|drift correction]], a merely stale `r8r.io/source-hash` annotation over unchanged content is repaired silently. See [[operations]] for what each one emits.
+- **ownership classification comes first.** The live read of an existing object is classified by `ClassifyReplicaOwnership` before any conflict decision. A `Stripped` replica — this source's `r8r.io/source-uid`, `managed-by` rewritten — is re-applied (`OwnershipRepaired`), which also returns it to the drift watch; it never reaches `DecideConflict`, which would have filed it as foreign and, under `Fail`, dropped its inventory entry. Only what is not provably ours goes on to the conflict decision. Detail: [[drift-detection#Ownership verification|ownership verification]].
 - conflicts with pre-existing unmanaged objects: `Fail` (default) / `Adopt` (hash-equal only) / `Overwrite`, decided by the two-key turn below. An object already managed by k8s-r8r for a *different* source is always `Fail`, whatever either key says.
 - missing namespace: created only when policy sets `allowNamespaceCreation`; namespaces are never GC'd
 
@@ -58,7 +59,7 @@ One conflict-path caveat still stands before granting anything above `Fail`:
 
 ## 4. Tracking and cleanup
 
-Every replica lands in `Replication.status.inventory` — the GC source of truth. Cleanup triggers: source deleted, annotation removed, target deselected, policy revoked ([[policy-model#Revocation|revocation]]). Cluster deregistration releases inventory with a `ClusterGone` event (no credential remains to delete with) — deselect before deregistering for clean removal. Ongoing sync: [[drift-detection]].
+Every replica lands in `Replication.status.inventory` — the GC source of truth. Cleanup triggers: source deleted, annotation removed, target deselected, policy revoked ([[policy-model#Revocation|revocation]]). `collectGarbage` live-reads each candidate first, and its safety gate is three-state: `Managed` → deleted; `Stripped` → deleted anyway (`OwnershipStripped`; it used to be abandoned); `Foreign` → never touched, entry released with a `ReplicaOrphaned` event and an `orphaned` count, since the object may need manual cleanup. An entry for an object that still exists is never dropped silently. Cluster deregistration releases inventory with a `ClusterGone` event (no credential remains to delete with) — deselect before deregistering for clean removal. Ongoing sync: [[drift-detection]].
 
 ## 5. Status: one writer per condition
 

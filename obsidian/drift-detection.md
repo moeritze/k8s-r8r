@@ -38,12 +38,39 @@ The corrective write is not silent any more ([#30](https://github.com/moeritze/k
 
 **Read the rate off the metric, not the event stream.** `EventLimiter` suppresses an identical (object, reason, message) for five minutes, so drift recurring with the same hashes collapses into one event. That is the intended flood control ([[operations|rate-limited events]]), and it means the event stream understates recurrence by design. The counter is deliberately not rate-limited: event = "this happened, here is which object", metric = "and it is happening N times a minute".
 
-## Known gap (open issue)
+## Ownership verification
 
-- **Blind if `managed-by` is rewritten** ([#36](https://github.com/moeritze/k8s-r8r/issues/36)). The spoke cache is label-filtered server-side, and `driftHandler.observe` returns early for anything without `app.kubernetes.io/managed-by: k8s-r8r`. If another controller, a GitOps tool, or an operator rewrites or removes that label on a replica, the object leaves the watch entirely while staying in `Replication.status.inventory` — edits and deletions then go unnoticed forever, and status keeps reporting the target ready. Note the correction signal above does not help here: an object that never reaches the reconcile never gets counted. This is the metadata-only design working as specified, so the fix is not "watch more": candidates are resync-time `Transport.Get` verification of inventory members, or a signal when an inventory member is absent from the filtered cache.
+Two labels on every replica do different jobs, and [#36](https://github.com/moeritze/k8s-r8r/issues/36) was the cost of treating them as one:
+
+| Label | Job | Who writes it |
+|---|---|---|
+| `app.kubernetes.io/managed-by: k8s-r8r` | the spoke cache's server-side selector, re-checked in `driftHandler.observe` — the watch's **membership predicate** | k8s-r8r, but it is an `app.kubernetes.io/` convention key plenty of other tooling stamps too |
+| `r8r.io/source-uid` | the **durable provenance mark**: the hub source's UID | only k8s-r8r; a UID is neither guessable nor reused across a delete/recreate |
+
+Strip or rewrite `managed-by` on a replica and it leaves the informer entirely — no add, update or delete is ever delivered for it again. The fix is not "watch more". `applyTarget` and `collectGarbage` already `Transport.Get` every inventory entry they act on; `ClassifyReplicaOwnership` (`internal/engine/drift.go`) reads that live object's labels in three states keyed on the source UID:
+
+| State | Labels found | Apply path | GC path |
+|---|---|---|---|
+| `Managed` | both marks | normal drift comparison | deleted |
+| `Stripped` | own `source-uid`, `managed-by` gone or rewritten | **repaired** — re-applied, `OwnershipRepaired` | **deleted anyway**, `OwnershipStripped` |
+| `Foreign` | no matching `source-uid` | the [[replication-flow#Conflict handling is a two-key turn\|conflict contract]] decides | never touched; entry released, `ReplicaOrphaned` |
+
+- **The repair is the fix for the blindness.** Re-applying restores the marks, which puts the object back inside the cache selector; the watch resumes and the `DriftDetector` needs no notification.
+- **Zero added steady-state load.** No new API calls, no cache probing — a label comparison on reads that already happen. "Absent from the filtered cache" and "lacks `managed-by: k8s-r8r`" are the same statement, and the live read is authoritative where the informer is only eventually consistent.
+- **Detection takes up to one `--spoke-resync`** (10h default): the watch cannot see an object outside its selector, so the periodic reconcile is what finds it. Lower the flag for a tighter bound — it moves the informer resync and the periodic reconcile together.
+- **Retained replicas are not verified.** A slot frozen under `revocationPolicy: Retain` is neither applied nor collected, so it is never read — the same rule that keeps it out of drift repair ([[security-model]]).
+
+Two worse bugs sat behind the reported one, fixed in the same change ([PR #51](https://github.com/moeritze/k8s-r8r/pull/51)):
+
+- **`applyTarget` forgot replicas it created.** `IsManagedReplica` needs both marks, so a stripped replica was filed as an unmanaged foreign object; under the default `Fail` that reported `Conflict` *and* dropped the inventory entry. Re-planned next pass, dropped again — and a `Replication` deleted in the wrong half of that cycle stranded a copy of the Secret on the spoke with nothing tracking it.
+- **`collectGarbage` released such entries in silence.** Its gate could not tell "we never created this" from "we created this and someone relabelled it", and dropped both with no event and no metric.
+
+**Behaviour change:** a `Stripped` replica is now *deleted* at cleanup, where it used to be abandoned — only ever for an object carrying this replication's own source UID at the name its own inventory records.
+
+**Its own signal, not a drift correction.** `k8s_r8r_replica_ownership_lost_total{cluster,action}`, `action` ∈ `repaired|deleted|orphaned`. A stripped label over identical content is metadata, not payload, so it leaves `k8s_r8r_drift_corrections_total` alone and that counter keeps its invariant. When the payload diverged too, both fire (`OwnershipRepaired` + `DriftCorrected`) — the pair is the strongest tampering signature there is. Alerting: [[operations#What to alert on|operations]]. User-facing write-up: `../docs/security.md` (*The ownership label is the watch's membership predicate*).
 
 ## Why metadata-only
 
 Memory stays bounded at fleet scale AND no fleet-wide secret data accumulates in hub caches — scale and [[security-model|security]] in one move. Cost: one watch connection per cluster per GVK (ArgoCD-proven pattern).
 
-Implementation: `internal/engine/drift.go` (watch + enqueue), `internal/engine/reconciler.go` (`applyTarget`: the corrective write, the counter and the event) · spec: `openspec/specs/replication-engine` (drift requirement) + `observability-operations` (metrics, rate-limited events) · flow context: [[replication-flow]]
+Implementation: `internal/engine/drift.go` (watch + enqueue, `ClassifyReplicaOwnership`), `internal/engine/reconciler.go` (`applyTarget`: the corrective write, the counter and the event; `collectGarbage`: the three-state gate) · spec: `openspec/specs/replication-engine` (drift requirement; *Replica ownership verification*) + `observability-operations` (metrics, rate-limited events; *Replica ownership signals*) · flow context: [[replication-flow]]

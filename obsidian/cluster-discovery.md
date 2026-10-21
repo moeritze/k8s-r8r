@@ -29,9 +29,9 @@ Failure modes, deliberately different:
 
 Before this, the GVR was pinned to `v1beta1`: an unserved version returned 404, the reflector retried forever, `Start` hung in `WaitForCacheSync`, the pod stayed Ready, and the fleet looked empty. Issue #28.
 
-## Provider settings — not wired up yet
+## Provider settings
 
-`discovery.Options.Settings` (`internal/discovery/registry.go`) is a per-provider string map, and the CAPI provider reads `namespace` from it to restrict the `Cluster` watch to one namespace. Nothing populates it in a deployed operator: `cmd/main.go` constructs `discovery.New(name, discovery.Options{HubConfig: hubCfg})` and there is no flag or chart value that reaches the map. So in practice the provider always watches `Cluster` objects **cluster-wide**, and the settings mechanism only works from tests. It also removes the natural escape hatch for a version-negotiation failure above. Tracked: [#37](https://github.com/moeritze/k8s-r8r/issues/37).
+`discovery.Options.Settings` (`internal/discovery/registry.go`) is a per-provider string map, populated from the repeatable `--discovery-setting key=value` flag (chart: `discoverySettings`). The CAPI provider reads `namespace` from it to restrict the `Cluster` watch to one namespace; unset, the default, watches cluster-wide. Set it when the fleet runs identically named `Cluster`s in several namespaces, since discovery keys targets by `Cluster` name. Unknown keys are ignored, but a malformed entry fails startup — a mistyped setting would otherwise silently fall back to the default and look healthy. Fixed in [#37](https://github.com/moeritze/k8s-r8r/issues/37).
 
 ## Credential bootstrap (D5)
 
