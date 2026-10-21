@@ -12,6 +12,12 @@ release; they are called out under **Changed** or **Removed**.
 
 ### Changed
 
+- **Multi-arch images cross-compile instead of building arm64 under QEMU.**
+  The Dockerfile builder stage runs on `$BUILDPLATFORM`, and builds use the
+  GitHub Actions layer cache. The image publish and chart publish steps are
+  now composite actions shared by the release and edge lanes. No
+  consumer-visible change: release tags, `:latest` gating, GitHub releases and
+  the `release.yml@refs/tags/v…` signing identity are unchanged.
 - **BREAKING: the conflict policy now needs consent from the request as well
   as from policy** ([#34](https://github.com/moeritze/k8s-r8r/issues/34)).
   `Overwrite` and `Adopt` used to be decided by `allowedConflictPolicies`
@@ -41,6 +47,14 @@ release; they are called out under **Changed** or **Removed**.
 
 ### Added
 
+- **Edge channel: every push to `main` is installable.** `edge.yml` publishes
+  `ghcr.io/moeritze/k8s-r8r:sha-<short>` (and the moving `:main`) plus the
+  chart `oci://ghcr.io/moeritze/charts/k8s-r8r` at version
+  `0.0.0-main.g<short>`, with the same cosign signatures, SBOM and SLSA
+  provenance as a release. Edge is signed as `edge.yml@refs/heads/main`, so a
+  verifier pinned to the release identity rejects it. Never `:latest`, no
+  GitHub release, pruned after 30 days (`prune-edge.yml`, dry-run until
+  enabled). For trials, not adoption — see `docs/releasing.md`.
 - **`--discovery-setting key=value`** manager flag (chart value
   `discoverySettings`, a map) finally reaches
   `discovery.Options.Settings` ([#37](https://github.com/moeritze/k8s-r8r/issues/37)).
