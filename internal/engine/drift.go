@@ -272,9 +272,9 @@ const (
 // Replication whose source has the given UID.
 //
 // Note the deliberate gap with IsManagedReplica, which requires both marks
-// and stays the GC safety gate and the conflict predicate: this function
-// exists precisely to name the case IsManagedReplica cannot express, "our
-// replica, relabelled".
+// and stays the conflict predicate (DecideConflict); garbage collection uses
+// this function instead, because it names the case IsManagedReplica cannot
+// express, "our replica, relabelled".
 func ClassifyReplicaOwnership(labels map[string]string, sourceUID types.UID) ReplicaOwnership {
 	// An empty source UID must never match an object that simply has no
 	// source-uid label — both read as "" through the map.

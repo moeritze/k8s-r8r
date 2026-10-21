@@ -32,7 +32,7 @@ Multiple policies SHALL combine by union: a request (or an individual target of 
 - **THEN** the request is denied (no single policy permits it)
 
 ### Requirement: Policy options gate side effects
-Each policy SHALL carry options that gate engine behavior for requests it permits: `allowNamespaceCreation` (default false), permitted `conflictPolicy` values (default only `Fail`), and `revocationPolicy: Retain | Delete` (default `Delete`) controlling what happens to existing replicas when permission is withdrawn.
+Each policy SHALL carry options that gate engine behavior for requests it permits: `allowNamespaceCreation` (default false), `allowedConflictPolicies` (default `[Fail]`), and `revocationPolicy: Retain | Delete` (default `Delete`) controlling what happens to existing replicas when permission is withdrawn.
 
 #### Scenario: Namespace creation denied by default
 - **WHEN** a permitted request targets a namespace that does not exist on the target cluster and no matching policy sets `allowNamespaceCreation: true`
