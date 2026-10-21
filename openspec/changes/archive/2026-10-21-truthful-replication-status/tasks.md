@@ -60,6 +60,6 @@
 - [x] 5.1 `docs/policies.md`: describe what a denied request looks like in
       status, not just as an event, and flag the visible upgrade behavior.
 - [x] 5.2 `CHANGELOG.md`: entry under Unreleased.
-- [ ] 5.3 `obsidian/` notes — deferred: the vault is owned by a parallel
+- [x] 5.3 `obsidian/` notes — deferred: the vault is owned by a parallel
       change in this sprint. The required updates are listed in the PR body
-      for folding in.
+      for folding in. Done in PR #50 (folds #27, #30 and #34 into the vault).
