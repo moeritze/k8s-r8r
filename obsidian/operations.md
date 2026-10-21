@@ -87,4 +87,17 @@ Leader election (single writer, standby failover from persisted CRs/inventory). 
 
 Released versions install from the published chart: `helm install k8s-r8r oci://ghcr.io/moeritze/charts/k8s-r8r --version <x.y.z>` — pulls the matching `ghcr.io/moeritze/k8s-r8r` image automatically ([[development|release process]], `../docs/releasing.md`). For development, the in-repo chart `charts/k8s-r8r` (webhook cert-manager toggle, personas, metrics). Teardown order matters: remove annotations/policies → replicas GC → `helm uninstall`; finalizer escape hatch documented in `../docs/uninstall.md`.
 
+### Edge builds
+
+Every push to `main` publishes an installable trial build ([[development#Edge lane|edge lane]]). For trials, not adoption.
+
+| | Release | Edge |
+|---|---|---|
+| Image | `:v<x.y.z>` (+ `:latest` if stable) | `:sha-<short>` (immutable), `:main` (moving) |
+| Chart version | `<x.y.z>` | `0.0.0-main.g<short>` — sorts below every release, so `helm upgrade` without `--version` never picks it |
+| Signing identity | `…/.github/workflows/release.yml@refs/tags/v…` | `…/.github/workflows/edge.yml@refs/heads/main` |
+| Retention | kept | pruned after 30 days |
+
+Install edge by **chart version**, not by `:main` — the chart's `appVersion` pins the matching `sha-` image, so a later merge cannot change a running trial. A verifier pinned to one identity rejects the other lane's artifacts by construction. Pruning (`prune-edge.yml`, weekly) deletes only `sha-*` / `0.0.0-main.*` tags older than 30 days and the platform manifests only they referenced; it never blanket-deletes untagged versions (those are the children of live images). Scheduled runs are dry-run until the repo variable `PRUNE_EDGE_LIVE=true`. Commands: `../docs/releasing.md` (Edge channel).
+
 Spec: `openspec/specs/observability-operations`

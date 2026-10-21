@@ -65,7 +65,8 @@ above as CI-proven and now partly field-proven.
 no long-running deployment, upgrade paths untested, and day-2 failure
 modes still being discovered. Do not run it against production fleets.
 
-Version tags publish a multi-arch image and Helm chart to ghcr (see
+Version tags publish a multi-arch image and Helm chart to ghcr; every push
+to `main` publishes a signed edge build for trials (see
 [docs/releasing.md](docs/releasing.md)).
 
 ## Trust model
@@ -172,7 +173,10 @@ helm install k8s-r8r oci://ghcr.io/moeritze/charts/k8s-r8r \
 The chart pulls the matching operator image
 (`ghcr.io/moeritze/k8s-r8r`) automatically. For development, install the
 in-repo chart instead (`helm install k8s-r8r charts/k8s-r8r ...` with a
-locally built image — see the quickstart).
+locally built image — see the quickstart). To trial unreleased fixes, every
+push to `main` publishes an edge chart (`--version 0.0.0-main.g<short-sha>`)
+— see [Edge channel](docs/releasing.md#edge-channel-every-push-to-main);
+trials only, not adoption.
 
 Requires Kubernetes **1.30+** and, for the optional advisory webhook,
 cert-manager (or bring your own cert — see the chart's `values.yaml`).
